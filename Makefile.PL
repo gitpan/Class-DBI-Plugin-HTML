@@ -13,6 +13,7 @@ WriteMakefile(
                              Class::DBI::Plugin => .03,
                              Class::DBI::Plugin::RetrieveAll => 1,
                              Class::DBI::AbstractSearch => .04,
+			     Class::DBI::Plugin::AbstractCount => ">.01",
      
                             }, # e.g., Module::Name => 1.1
     ($] >= 5.005 ?    ## Add these new keywords supported since 5.005

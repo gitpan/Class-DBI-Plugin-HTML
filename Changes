@@ -1,5 +1,32 @@
 Revision history for Perl extension Class::DBI::Plugin::HTML.
 
+.8 - Correctly check for passed in column names in build_table
+     as an array ref
+     
+   ! Completely changed the interface.  Create your own object
+     that is a Class::DBI::Plugin::HTML object.  This provides
+     for setting of parameters in a safer OO way as well as
+     via arguments for each method.
+     
+   + Added alternate row background color, default is grey
+   
+   + Added accessor methods to set various attributes used
+     across several methods.  Not all items have an accessor.
+     
+   ! Renamed attributes that are passed to methods to match
+     the accessor methods that have been added.
+     
+   + Modified (most of) the documentation to reflect the changes
+     outlined above.
+     
+   + Added dependency on Class::DBI::Plugin::AbstractCount to
+     speed up the string_filter_navigation method
+     
+   + Added additional notes in pod to clarify a couple of
+     points
+     
+   + Added link to example web page: http://cdbi.gina.net/cdbitest.pl
+
 .7 o Implemented Class::DBI::Plugin as the base class instead
      of Exporting the methods
      
@@ -10,7 +37,7 @@ Revision history for Perl extension Class::DBI::Plugin::HTML.
      indicate which page (cgi script) is to be used in url
      creation
      
-   + added -from_tag_attributes to build_form methods allowed
+   + added -form_tag_attributes to build_form methods allowed
      attributes
    
    + added -hidden attributes to the build_form methods allowed
