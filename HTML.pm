@@ -1,21 +1,8 @@
 package Class::DBI::Plugin::HTML;
 
-require Exporter;
-our @ISA = qw(Exporter);
-our @EXPORT = qw( 
-                  html_table 
-		  build_form
-		  html_table_navigation
-		  build_table
-		  add_bottom_span
-		  _process_excludes
-		  _process_attributes
-		  fill_in_form
-		  search_ref
-		  url_query
-		   );
+use base 'Class::DBI::Plugin';
 
-our $VERSION = 0.6;		   
+our $VERSION = 0.7;
 use HTML::Table;
 use HTML::FillInForm;
 use CGI qw/:form/;
@@ -71,7 +58,7 @@ Class::DBI::Plugin::HTML - Generate HTML Tables and Forms in conjunction with Cl
       -exclude => [ 'created_on' , 'modified_on' ],
       -table   => $html_table,
       -where   => $where,
-      -url     => $url,
+      -query_string     => $url_query,
       
       user_id => sub {
           return qq!<a href="show.pl?$url_query&id=! . shift() . qq!">view</a>!  
@@ -80,7 +67,8 @@ Class::DBI::Plugin::HTML - Generate HTML Tables and Forms in conjunction with Cl
  my $nav = Table::User->html_table_navigation(
      -pager        => $pager,
      -navigation   => 'next',
-     -script       => 'test2.pl',
+     -page_name     => 'test2.pl',
+     -query_string => $url_query,
  );
 
  print "'$nav'\n";
@@ -194,8 +182,6 @@ special formating or linkage.
 
 =cut
 
-
-
 =head2 html_table
 
 returns an HTML::Table object, this is a public method and accepts a hash as its
@@ -203,8 +189,8 @@ constructor options.  See HTML::Table for valid arguments.
 
 =cut
 
-sub html_table {
-    my ($self,%args) = @_;
+sub html_table : Plugged {
+    my ( $self, %args ) = @_;
     return HTML::Table->new(%args);
 }
 
@@ -264,7 +250,7 @@ you dynamically create these.
 
 -order (scalar, optional) - This is passed along with the -where OR it is sent to the retrieve_all_sort_by method if present.  The retrieve_all_sort_by method is part of the Class::DBI::Plugin::RetrieveAll module.
 
--script (scalar) - Used to create the links for the built in 'ONLY' and 'LIKE' utilities
+-page_name (scalar) - Used to create the links for the built in 'ONLY' and 'LIKE' utilities
 
 -url (scalar, optional) - passed to the anonymous subroutines that might be available for a particular column.
 
@@ -296,74 +282,93 @@ assigned in your search_ref call.
 
 =cut
 
-
-
-sub build_table {
-    my ($self,%args) = @_;
-    my ($table_obj,@columns);
+sub build_table : Plugged {
+    my ( $self, %args ) = @_;
+    
     # print $args{-table} , "\n";
     my $table = $args{-table} || $self->html_table();
-    
-    my $table_obj = $args{-pager} || $self;
-    @columns = @{ $args{-columns} }; 
-    if (!@columns) { @columns = $self->columns(); }
-    print Dumper(\@columns) if $debug;
 
-    if (!@columns) {
-       warn "Array 'columns' was not defined and could not be auto identified\n";
+    my $table_obj = $args{-pager} || $self;
+    my @columns = @{ $args{-columns} };
+    if ( !@columns ) { @columns = $self->columns(); }
+    print Dumper( \@columns ) if $debug;
+
+    if ( !@columns ) {
+        warn
+          "Array 'columns' was not defined and could not be auto identified\n";
     }
-    
-    if (ref $args{-exclude} eq 'ARRAY') {
-        @columns = $self->_process_excludes($args{-exclude},@columns);
+
+    if ( ref $args{-exclude} eq 'ARRAY' ) {
+        @columns = $self->_process_excludes( $args{-exclude}, @columns );
     }
     my @records;
-    
-    if (ref $args{-records} eq 'ARRAY') {
+
+    if ( ref $args{-records} eq 'ARRAY' ) {
         @records = @{ $args{-records} };
-    } else {
-    
-        if (ref $args{-where} ne 'HASH') {
-            if (defined $args{-order}) {
-                @records = $table_obj->retrieve_all_sorted_by($args{-order});
-	    } else {
-	        @records = $table_obj->retrieve_all;
-	    }
-	    # @records = $table_obj->search( user_id => '>0' , { order_by => $args{-order} } );
-        } else {
-            # my %attr = $args{-order};
-            @records = $table_obj->search_where( $args{-where} , { order => $args{-order} } );
+    }
+    else {
+
+        if ( ref $args{-where} ne 'HASH' ) {
+            if ( defined $args{-order} ) {
+                @records = $table_obj->retrieve_all_sorted_by( $args{-order} );
+            }
+            else {
+                @records = $table_obj->retrieve_all;
+            }
+
+# @records = $table_obj->search( user_id => '>0' , { order_by => $args{-order} } );
         }
-    
+        else {
+
+            # my %attr = $args{-order};
+            @records =
+              $table_obj->search_where( $args{-where},
+                { order => $args{-order} } );
+        }
+
     }
     foreach my $rec (@records) {
         my @row;
         foreach (@columns) {
-	
-	print "col = $_\n" if $debug;
-             if (ref $args{$_} eq 'CODE') {
-                 push @row, $args{$_}->($rec->$_,$args{-url});
-             } elsif ($args{$_} =~ /only|like/i) {
-	         # || $args{$_} eq 'LIKE') {
-	         # send script, column, value, url 
-	         push @row, _value_link($args{$_},$args{-script},$_,$rec->$_,$args{-url});
-	     } else {
-                 push @row, $rec->$_;
 
-             }
+            print "col = $_\n" if $debug;
+            if ( ref $args{$_} eq 'CODE' ) {
+                push @row, $args{$_}->( $rec->$_, $args{-query_string} );
+            }
+            elsif ( $args{$_} =~ /only|like|beginswith|endswith|contains/i ) {
+
+                # || $args{$_} eq 'LIKE') {
+                # send script, column, value, url
+                push @row,
+                  _value_link( $args{$_}, $args{-page_name}, $_, $rec->$_,
+                    $args{-query_string} );
+            }
+            else {
+                push @row, $rec->$_;
+
+            }
         }
-        $table->addRow( @row );
+        $table->addRow(@row);
+        $table->setRowClass( -1, $args{-rowclass} ) if defined $args{-rowclass};
     }
     return $table;
 }
 
 =head2 build_form
 
-Accepts a hash of options to define the form options
+Accepts a hash of options to define the form options.  Values can be left blank for the
+value on keys in form element names if you want to use the form fill in technique described
+in this document.
 
     my $form = Table::User->build_form(
-                
+       # assign attributes of the form tag (optional)
+       -form_tag_attributes => { enctype => 'multipart/form-data' },
        -columns => [ 'user_name','first_name','last_name' ],
        -exclude => [ 'user_id' , 'created_on' , 'modified_on' ],
+       
+       # add hidden tags to bottom of form, these values are put
+       # into the first cell of the table
+       -hidden => { 'user_id' => '' },
        
        # assign the friendly name for the cell with the form
        # element name
@@ -378,95 +383,127 @@ Accepts a hash of options to define the form options
      print $form;
 
 =cut
-     
-sub build_form {
 
-    my ($self,%args) = @_;
+sub build_form : Plugged {
+
+    my ( $self, %args ) = @_;
+
     #my %args = %{$targs};
     #undef($targs);
     my $html_table = $args{-table} || HTML::Table->new();
     my @columns;
-    if (ref $args{-columns} eq 'ARRAY') {
+    if ( ref $args{-columns} eq 'ARRAY' ) {
         @columns = @{ $args{-columns} };
-    } else {
+    }
+    else {
         @columns = $self->columns if !@columns;
     }
-    if (!@columns) {
-       warn "Array 'columns' was not defined and could not be auto identified\n";
+    if ( !@columns ) {
+        warn
+          "Array 'columns' was not defined and could not be auto identified\n";
     }
-    if (ref $args{-exclude} eq 'ARRAY') {
-        @columns = $self->_process_excludes($args{-exclude},@columns);
+    if ( ref $args{-exclude} eq 'ARRAY' ) {
+        @columns = $self->_process_excludes( $args{-exclude}, @columns );
     }
 
     my %cgi_field = $self->to_cgi;
 
     foreach my $col (@columns) {
         my $cell_content;
-        if (ref $args{$col} eq 'CODE') {
-	    $cell_content = $args{$col}->($cgi_field{$col}->as_HTML());
-	} else {
-	    $cell_content = $cgi_field{$col}->as_HTML();
-	}
-	
-        $html_table->addRow( 
-	    $args{-label}->{$col} || $col ,
-	    $cell_content
-	);
+        if ( ref $args{$col} eq 'CODE' ) {
+            $cell_content = $args{$col}->( $cgi_field{$col}->as_HTML() );
+        }
+        else {
+
+            # warn "$col\n";
+            $cell_content = $cgi_field{$col}->as_HTML();
+        }
+
+        $html_table->addRow( $args{-label}->{$col} || $col, $cell_content );
+        $html_table->setRowClass( -1, $args{-rowclass} )
+          if defined $args{-rowclass};
     }
-    
-    if (!$args{no_submit}) {
-        $html_table = $self->_process_attributes($args{-attributes},$html_table);
-        $html_table->addRow( );
-        $html_table->setCellColSpan( $html_table->getTableRows, 1 , $html_table->getTableCols  );
-        $html_table->setCell($html_table->getTableRows, 1 , CGI::submit('.submit' , 'Continue') );
+
+    if ( !$args{no_submit} ) {
+        $html_table =
+          $self->_process_attributes( $args{-attributes}, $html_table );
+        $html_table->addRow();
+        $html_table->setCellColSpan( $html_table->getTableRows, 1,
+            $html_table->getTableCols );
+        $html_table->setCell( $html_table->getTableRows, 1,
+            CGI::submit( '.submit', 'Continue' ) );
     }
-    
-    if (!$args{no_form_tag}) {
-         $html_table = start_form( $args{-form_tag_attributes} ) . $html_table . end_form;
+
+    if ( $args{-hidden} ) {
+        my $corner = $html_table->getCell( 1, 1 );
+        foreach my $hidden_field ( %{ $args{-hidden} } ) {
+            next if $hidden_field !~ /\w/;
+            $corner .=
+qq!<input name="$hidden_field" type="hidden" value="$args{-hidden}{$hidden_field}">!;
+        }
+
+        $html_table->setCell( 1, 1, $corner );
     }
-   
+
+    if ( !$args{no_form_tag} ) {
+        $html_table =
+          start_form( $args{-form_tag_attributes} ) . $html_table . end_form;
+    }
+
     return $html_table;
 
 }
 
-sub _process_attributes {
-    my ($self,$attributes,$html_table) = @_;
+sub _process_attributes : Plugged {
+    my ( $self, $attributes, $html_table ) = @_;
     foreach ( keys %{$attributes} ) {
-        if (ref $attributes->{$_} eq 'ARRAY') { 
-            print "doing a $_\n" if $debug; 
-            $html_table->$_( @{ $attributes->{$_} }  );
-        } else {
-            $html_table->$_($attributes->{$_});
+        if ( ref $attributes->{$_} eq 'ARRAY' ) {
+            print "doing a $_\n" if $debug;
+            $html_table->$_( @{ $attributes->{$_} } );
+        }
+        else {
+            $html_table->$_( $attributes->{$_} );
         }
     }
     return $html_table;
 }
 
-sub _process_excludes {
+sub _process_excludes : Plugged {
 
-    my ($self,$exclude_list,@columns) = @_;
+    my ( $self, $exclude_list, @columns ) = @_;
     my %exclude;
-    map { $exclude{$_} = 1 } @{ $exclude_list };
+    map { $exclude{$_} = 1 } @{$exclude_list};
     print "excluding\n" if $debug;
     map { undef $_ if exists $exclude{$_} } @columns;
-    return grep /\w/ , @columns;
+    return grep /\w/, @columns;
 }
 
 sub _value_link {
 
-       my ($type,$script_name,$column,$name,$turl) = @_;
-       $type=uc($type);                         
-       if ($turl =~ /$type\-$column=/) {
-           $turl =~ s/$type\-$column=[\w\-\_]+//;
-       } else {
-           my $link_val = $name;
-           $link_val = 1 if $type =~ /like/i;
-           $turl .= "&$type-$column=$link_val";
-       }
-       return qq!<a href="$script_name?$turl">$name</a>!;
+    my ( $type, $page_name, $column, $name, $turl ) = @_;
+    $type = uc($type);
+    if ( $turl =~ /$type\-$column=/ ) {
+        $turl =~ s/$type\-$column=[\w\-\_]+//;
+    }
+    else {
+        my $link_val = $name;
+
+        # get rid of the past filter on position (begin,end,contains)
+
+        if ( $turl =~ /$type\w+\-$column=/ ) {
+            $turl =~ s/$type\w+\-$column=1//;
+        }
+
+        $link_val = 1 if $type =~ /like|begin|end|contain/i;
+        if ( $type =~ /begin|end|contain/i ) {
+            $type .= $name;
+        }
+
+        $turl .= "&$type-$column=$link_val";
+    }
+    return qq!<a href="$page_name?$turl">$name</a>!;
 
 }
-
 
 =head2 html_table_navigation
 
@@ -479,53 +516,96 @@ Navigation can be in google style (1 2 3 4) or block (previous,next).
                         # next/previous style 
                         # "google" style is the default
                         -navigation   => 'block',
-                        -page_url     => 'test2.pl', 
+                        -page_name     => 'test2.pl', 
                    );
 
     print "'$nav'\n";
 
 =cut
 
-sub html_table_navigation {
-    my ($self,%args) = @_;
+sub html_table_navigation : Plugged {
+    my ( $self, %args ) = @_;
     my $pager = $args{-pager};
 
-    my $nav;
-    if (defined $args{-navigation} &&
-        defined $args{-page_url}
-	) {
+    my $nav_block;
+    my $nav_number;
+    if (   defined $args{-navigation}
+        && defined $args{-page_name} )
+    {
 
-	if ( lc($args{-navigation}) eq 'block' ) {
-  
-	    if ( $pager->previous_page ) {
-	        $nav .= CGI::a( {href => "$args{-page_url}?page=" . 
-		$pager->previous_page . '&' .
-		$args{-query_string} } , 'prev' );
-	
-	    }
-	
-            if ($pager->previous_page && $pager->next_page) {
-		$nav .= ' | ';
-	    }
-		
-	     if ($pager->next_page) {
-		$nav .= CGI::a( {href => "$args{-page_url}?page=" .
-		$pager->next_page . '&' .
-		$args{-query_string} 
-		} , 'next' );
-	    }
-	} else {
-	    foreach my $num ($pager->first_page .. $pager->last_page) {
-                if ($num == $pager->current_page) { 
-		    $nav .= "[ $num ]";
-		} else {
-		    $nav .= '[ ';
-                    $nav .= CGI::a( { href => "$args{-page_url}?page=$num&$args{-query_string}" } , $num );
-		    $nav .= ' ]';
-		}
-		$nav .= ' ';
+        #if ( lc($args{-navigation}) eq 'block' ) {
+
+        if ( $pager->previous_page ) {
+            $nav_block .= CGI::a(
+                {
+                        href => "$args{-page_name}?page="
+                      . $pager->previous_page . '&'
+                      . $args{-query_string}
+                },
+                'prev'
+            );
+
+        }
+
+        if ( $pager->previous_page && $pager->next_page ) {
+            $nav_block .= ' | ';
+        }
+
+        if ( $pager->next_page ) {
+            $nav_block .= CGI::a(
+                {
+                        href => "$args{-page_name}?page="
+                      . $pager->next_page . '&'
+                      . $args{-query_string}
+                },
+                'next'
+            );
+        }
+
+        #} else {
+        foreach my $num ( $pager->first_page .. $pager->last_page ) {
+            if ( $num == $pager->current_page ) {
+                $nav_number .= "[ $num ]";
             }
-	}
+            else {
+                $nav_number .= '[ ';
+                $nav_number .= CGI::a(
+                    {
+                        href =>
+                          "$args{-page_name}?page=$num&$args{-query_string}"
+                    },
+                    $num
+                );
+                $nav_number .= ' ]';
+            }
+            $nav_number .= ' ';
+        }
+
+        #}
+    }
+
+    $nav_number = '' if $nav_number =~ /\[ 1 \]\s$/;
+
+    my $nav = $nav_number;
+
+    # warn "'$nav_number'\n";
+
+    if ( lc( $args{-navigation} ) eq 'both' ) {
+        if ( $nav_block =~ /\|/ ) {
+            $nav_block =~ s/ \| / $nav_number/;
+            $nav = $nav_block;
+        }
+        elsif ( $nav_block =~ m#prev</a>$# ) {
+            $nav = $nav_block . ' ' . $nav_number;
+        }
+        else {
+            $nav = $nav_number . ' ' . $nav_block;
+        }
+
+    }
+
+    if ( $args{-navigation} eq 'block' ) {
+        $nav = $nav_block;
     }
 
     return $nav;
@@ -547,10 +627,10 @@ pass into HTML::FillInForm.
 
 =cut
 
-sub fill_in_form {
-   my ($self,%args) = @_;
-   my $fif = new HTML::FillInForm;
-   return $fif->fill(%args);
+sub fill_in_form : Plugged {
+    my ( $self, %args ) = @_;
+    my $fif = new HTML::FillInForm;
+    return $fif->fill(%args);
 
 }
 
@@ -562,11 +642,12 @@ the bottom of a table.
 
 =cut
 
-sub add_bottom_span {
-    my ($self,$table,$add) = @_;
-    $table->addRow( );
-    $table->setCellColSpan( $table->getTableRows, 1 , $table->getTableCols  );
-    $table->setCell($table->getTableRows, 1 , $add);
+sub add_bottom_span : Plugged {
+    my ( $self, $table, $add ) = @_;
+    $table->addRow();
+    $table->setCellColSpan( $table->getTableRows, 1, $table->getTableCols );
+    $table->setCell( $table->getTableRows, 1, $add );
+    return $table;
 }
 
 =head2 search_ref
@@ -598,6 +679,307 @@ Creates the query portion of the URL based on the incoming parameters
         # doesn't apply to the database fields
         -exclude_from_url => [ 'page' ], 
     );
+
+=head2 string_filter_navigation
+
+    my ($filter_navigation) = Table::User(
+       
+    );
+
+This method creates navigation in a series of elements, each element indicating a item that
+should appear in a particular column value.  This filter uses anchor points to determine how
+to qualify the search.  The anchor points are:
+   BEGINSWITH
+   ENDSWITH
+   CONTAINS
+
+The items in the 'strings' list will only be hrefs if they items in the database match the search, if you prefer them not to be displayed at all pass in the -hide_zero_match
+   
+The allowed parameters to pass into the method are:
+
+-hide_zero_match - Removes items that have no matches in the database from the strings allowed in the final navigation.
+
+-position (optional - default is 'begin') - Tells the method how to do the match, allowed options are any case
+of 'begin' , 'end' or 'contains'.  These options can be the entire anchor points as outlined above,
+but for ease of use only the aforemention is enforced at a code level.
+
+-query_string (optional) - This is the same as the parameter outlined in build_table above.
+
+-strings (optional, array_ref - default is A-Z) - Array ref containing the strings to filter on.
+
+-column - Indicates which column the string filter will occur on. If you want to provide a filter on multiple columns it is recommended that you create multiple string_filter_navigation.
+
+-page_name - The name of page that the navigation should link to
+
+-seperator (optional, default two non-breaking spaces) - The characters to place between each item in the list.
+
+-align (optional, defaults to center) - defines the alignment of the navigation
+
+-no_reset - don't include the table reset link in the output
+
+=cut
+
+sub string_filter_navigation : Plugged {
+
+    # intent of sub is to provide a consistent way to navigate to find
+    # records that contain a particular string.
+    my ( $self, %args ) = @_;
+
+    # set up or variables and defaults
+
+    my @links;
+    my @alphabet = @{ args{-strings} } || ( 'A' .. 'Z' );
+    $args{-separator} ||= '&nbsp;&nbsp;';
+    $args{-align}     ||= 'center';
+
+    if ( $args{-no_reset} == 0 ) {
+        push @links, qq!<a href="$args{-page_name}">Reset</a>$args{-separator}!;
+    }
+    my $filter;
+    my $link_text;
+    foreach my $string (@alphabet) {
+
+        if ( $args{-position} =~ /ends/i ) {
+            $filter    = "\%$string";
+            $link_text = 'ENDSWITH';
+        }
+        elsif ( $args{-position} =~ /contain/i ) {
+            $filter    = "\%$string\%";
+            $link_text = 'CONTAINS';
+        }
+        else {
+            $filter    = "$string\%";
+            $link_text = 'BEGINSWITH';
+        }
+
+        my @objects = $self->search_like(
+            $args{-column} => "$filter",
+
+            # { order_by => 'last_name' }
+        );
+
+        if (@objects) {
+
+# send script, column, value, url
+# push @row, _value_link($args{$_},$args{-page_name},$_,$rec->$_,$args{-query_string});
+# ($type,$page_name,$column,$name,$turl)
+            push @links,
+              _value_link( $link_text, $args{-page_name}, $args{-column},
+                $string, $args{-query_string} );
+
+# qq!<a href="$args{-page_name}?$link_text$string-$args{-column}=1">$string</a>!;
+        }
+        elsif ( $args{-hide_zero_match} > 1 ) {
+
+            # do nothing
+        }
+        else {
+            push @links, qq!$string!;
+        }
+
+    }
+
+    return qq!<div align="$args{-align}">!
+      . join( $args{-separator}, @links )
+      . "</div>";
+}
+
+sub search_ref : Plugged {
+    my ( $self, %args ) = @_;
+
+    my %where;
+    if ( exists $args{-exclude_from_url} ) {
+
+        # print_arrayref("Exclude from URL",$args{-exclude_from_url});
+        map { delete $args{-params}->{$_} } @{ $args{-exclude_from_url} };
+    }
+
+    if ( exists $args{-params} ) {
+
+        # print_hashref("Incoming parameters",$args{-params});
+        my @only       = grep /ONLY\-/,        keys %{ $args{-params} };
+        my @like       = grep /LIKE\-/,        keys %{ $args{-params} };
+        my @beginswith = grep /BEGINSWITH\w+/, keys %{ $args{-params} };
+        my @endswith   = grep /ENDSWITH\w+/,   keys %{ $args{-params} };
+        my @contains   = grep /CONTAINS\w+/,   keys %{ $args{-params} };
+
+        if (@only) {
+            warn "\tOnly show matches of:\n" if $debug;
+            foreach my $only (@only) {
+                $only =~ s/ONLY-//;
+
+    # print qq~\t\t$only becomes $only = '$args{-params}->{"ONLY-" . $only}'\n~;
+                $where{$only} = $args{-params}->{ "ONLY-" . $only };
+            }
+
+        }
+
+        if (@like) {
+
+            # print "\tLike clauses to be added\n";
+            foreach my $like (@like) {
+                $like =~ s/LIKE-//;
+
+# print "\t\t$like becomes \"first_name LIKE '$args{-like_column_map}->{$like}'\"\n";
+                if ( exists $args{-like_column_map}->{$like} ) {
+
+                    $where{$like} =
+                      { 'LIKE', $args{-like_column_map}->{$like} };
+                }
+            }
+        }
+
+        if (@beginswith) {
+            warn "\tShow only begining with\n" if $debug;
+            foreach my $beginswith (@beginswith) {
+                my ( $value, $column ) =
+                  $beginswith =~ m/beginswith(\w+)-([\w\_]+)/i;
+                warn
+qq~\t\t'$beginswith' - looking $column that begins with $value\n~;
+                $where{$column} = { 'LIKE', "$value\%" };
+            }
+        }
+
+        if (@endswith) {
+            warn "\tShow only endswith with\n" if $debug;
+            foreach my $endswith (@endswith) {
+                my ( $value, $column ) =
+                  $endswith =~ m/endswith(\w+)-([\w\_]+)/i;
+                warn
+                  qq~\t\t'$endswith' - looking $column that ends with $value\n~;
+                $where{$column} = { 'LIKE', "\%$value" };
+            }
+        }
+
+        if (@contains) {
+            warn "\tShow only entries that contain\n" if $debug;
+            foreach my $contains (@contains) {
+                my ( $value, $column ) =
+                  $contains =~ m/contains(\w+)-([\w\_]+)/i;
+                warn
+                  qq~\t\t'$contains' - looking $column that contain $value\n~;
+                $where{$column} = { 'LIKE', "\%$value\%" };
+            }
+        }
+
+    }
+    if ( exists $args{-columns} ) {
+
+        # print_arrayref("Columns",$args{-columns});
+
+    }
+
+    if ( exists $args{-table_rows} ) {
+
+        # print "\nTable rows = $args{-table_rows}\n\n";
+    }
+    if ( scalar( keys %where ) > 0 ) {
+        return \%where;
+    }
+    else {
+        return undef;
+    }
+
+}
+
+sub url_query : Plugged {
+    my ( $self, %args ) = @_;
+    if ( exists $args{-exclude_from_url} ) {
+        map { delete $args{-params}->{$_} } @{ $args{-exclude_from_url} };
+    }
+    my %Param = %{ $args{-params} };
+    my @url;
+    foreach my $key ( keys %Param ) {
+
+        if ( $key =~ m/\w/ && $Param{"$key"} ) {
+            push @url, qq~$key=~ . uri_escape( $Param{"$key"} )
+              if $Param{"$key"} ne '';
+        }
+    }
+
+    if ( $url[0] ) {
+        return join( '&', @url );
+    }
+    else {
+        return undef;
+    }
+}
+
+sub form_select : Plugged {
+    my ( $self, %args ) = @_;
+
+    my $html;
+    my @objs         = $self->get_records(%args);
+    my $value_column = $args{'-value_column'};
+    my $text_column  = $args{'-text_column'};
+    my $divider      = $args{'-text_divider'};
+    $divider         ||= ', ';
+    foreach my $obj (@objs) {
+        my $text;
+        my $value = $obj->$value_column();
+        if ( ref($text_column) eq 'ARRAY' ) {
+            my @text_multiple;
+            foreach my $tc ( @{$text_column} ) {
+                push @text_multiple, $obj->$tc();
+            }
+            $text = join( $divider, @text_multiple );
+        }
+        elsif ($text_column) {
+            $text = $obj->$text_column();
+        }
+        else {
+            $text = $value;
+        }
+        my $selected;
+        $selected = ' SELECTED' if $value eq $args{'-selected_value'};
+        $html .= qq!<option value="$value"$selected>$text</option>\n!;
+
+    }
+    if ( $args{no_select_tag} == 0 ) {
+        $html = qq!<select name="$args{'-value_column'}">
+       $html
+</select>!;
+    }
+    return $html;
+}
+
+sub get_records : Plugged {
+
+    # this code was taken from the build_table method
+    # due to a limitation of the Class::DBI::Pager module and/or the way
+    # in which this module identifies itself this code is currently replicated
+    # here since Class::DBI::Pager throws and error when used.
+    # behavior was retested with Class::DBI::Plugin and problem persisted
+
+    my ( $table_obj, %args ) = @_;
+    warn Dumper($table_obj) if $debug;
+    my @records;
+    if ( ref $args{-where} ne 'HASH' ) {
+        if ( defined $args{-order} ) {
+            @records = $table_obj->retrieve_all_sorted_by( $args{-order} );
+        }
+        else {
+            @records = $table_obj->retrieve_all;
+        }
+
+# @records = $table_obj->search( user_id => '>0' , { order_by => $args{-order} } );
+    }
+    else {
+
+        # my %attr = $args{-order};
+        @records =
+          $table_obj->search_where( $args{-where}, { order => $args{-order} } );
+    }
+    return @records;
+}
+
+=head2 form_select
+    
+this methods expects the following:
+    -value_column    # column containing the value for the option in the select
+    -text_column     # column containing the text for the optoin in the select (optional)
+    -selected_value  # the value to be selected (optional)
+    -no_select_tag   # returns option list only
 
 =head1 BUGS
 
@@ -635,78 +1017,5 @@ It may be used,  redistributed and/or modified under
 the same terms as Perl itself.
 
 =cut
-
-sub search_ref {
-   my ($self,%args) = @_;
- 
-   my %where;
-   if (exists $args{-exclude_from_url}) {
-       # print_arrayref("Exclude from URL",$args{-exclude_from_url});
-       map { delete $args{-params}->{$_} } @{ $args{-exclude_from_url} };
-   }
-   
-   if (exists $args{-params}) {
-       # print_hashref("Incoming parameters",$args{-params});
-       my @only = grep /ONLY\-/ , keys %{ $args{-params} };
-       my @like = grep /LIKE\-/ , keys %{ $args{-params} };
-       if (@only) {
-           warn "\tOnly show matches of:\n" if $debug;
-           foreach my $only (@only) {
-               $only =~ s/ONLY-//;
-               # print qq~\t\t$only becomes $only = '$args{-params}->{"ONLY-" . $only}'\n~;
-	       $where{$only} = $args{-params}->{"ONLY-" . $only};
-           }
-       
-       }
-       
-       if (@like) {
-           # print "\tLike clauses to be added\n";
-           foreach my $like (@like) {
-	       $like =~ s/LIKE-//;
-	       # print "\t\t$like becomes \"first_name LIKE '$args{-like_column_map}->{$like}'\"\n";
-	       if (exists $args{-like_column_map}->{$like}) {
-	           
-	           $where{$like} = { 'LIKE' , $args{-like_column_map}->{$like} }
-	       }
-	   }
-       }
-       
-   }
-   if (exists $args{-columns}) {
-       # print_arrayref("Columns",$args{-columns});
-
-   }
-
-   if (exists $args{-table_rows}) {
-       # print "\nTable rows = $args{-table_rows}\n\n";
-   }
-   if (scalar(keys %where) > 0) {
-       return \%where;
-   } else {
-       return undef;
-   }
-
-}
-
-sub url_query {
-   my ($self,%args) = @_;
-   if (exists $args{-exclude_from_url}) {    
-       map { delete $args{-params}->{$_} } @{ $args{-exclude_from_url} };
-   }
-   my %Param = %{ $args{-params} };
-   my @url;
-   foreach my $key ( keys %Param ) {
-           
-       if ($key =~ m/\w/ && $Param{"$key"}) {
-           push @url, qq~$key=~ . uri_escape($Param{"$key"}) if $Param{"$key"} ne '';
-       }
-   }
-       
-   if ($url[0]) {
-       return join('&',@url);
-   } else {
-       return undef;
-   }
-}
 
 1;

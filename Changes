@@ -1,5 +1,37 @@
 Revision history for Perl extension Class::DBI::Plugin::HTML.
 
+.7 o Implemented Class::DBI::Plugin as the base class instead
+     of Exporting the methods
+     
+   + named arguement for url query string to be:
+     -query_string across all methods
+   
+   + changed to -page_name from -script across all methods to
+     indicate which page (cgi script) is to be used in url
+     creation
+     
+   + added -from_tag_attributes to build_form methods allowed
+     attributes
+   
+   + added -hidden attributes to the build_form methods allowed
+     attributes
+     
+   o expanded the internal function '_value_link' to handle the
+     new BEGINSWITH ENDSWITH and CONTAINS filters.
+   
+   + added new method 'string_filter_navigation'
+   
+   + html_table_navigation now has three possible outputs
+      1) block (prev,next)
+      2) google (1,2,3..)
+      3) both block and google
+
+   + added new method form_select to generate HTML select form
+     elements
+     
+   + updated documentation to reflect additional methods and
+     method changes
+      
 .6 o Modified the build_table method to allow for multiple
      scenarios regarding table records, giving more control
      back to the end user with regard to return method.
