@@ -22,7 +22,8 @@ This module requires these other modules and libraries:
    Class::DBI::Pager
    HTML::Table
    HTML::FillInForm
-   Class::AsForm
+   Class::DBI::AsForm
+   Class::DBI::Plugin::RetrieveAll (optional)
 
 COPYRIGHT AND LICENCE
 

@@ -1,4 +1,38 @@
 Revision history for Perl extension Class::DBI::Plugin::HTML.
 
+.6 o Modified the build_table method to allow for multiple
+     scenarios regarding table records, giving more control
+     back to the end user with regard to return method.
+     
+   + Added new collasping/expanding table code. This modification 
+     allows for the dynamic navigation of records via a browser
+     based the content of specific fields.  See docs for more info
+     
+   o Cleaned up some of code for better order of operation and
+     to (reduce|increase) confusion.
+     
+   o Corrected some documenation errors and added additional
+     information to clarify some of the points.
+
+   - Removed url_and_where_statement method and created url_query
+     and search_ref in its place
+     
+   + Added url_query method - creates the query string of the URL
+     based on passed in parameters
+   
+   + Added search_ref method - creates generates the hash for the
+     AbstractSearch portion
+     
+   + Made the ONLY and LIKE filters built in tools and accesible
+     via assigning a value of "only" or "like" to a field name
+     
+   + Added a parameter to the  build_table, called 'script', used
+     to set the script name for links created by the built in link
+     feature
+     
+   + Added "FilterOnClick" title for dynamic filter process
+   
+   + Added SEE ALSO section to documentation
+     
 .5 - Initial release
 
