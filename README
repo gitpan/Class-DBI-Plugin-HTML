@@ -1,0 +1,31 @@
+Class::DBI::Plugin::HTML
+=======================
+
+The Class::DBI::Plugin::HTML module is for use with the
+Class::DBI module and requires additional modules as well.
+See DEPENDENCIES below for more information.
+
+INSTALLATION
+
+To install this module type the following:
+
+   perl Makefile.PL
+   make
+   make test
+   make install
+
+DEPENDENCIES
+
+This module requires these other modules and libraries:
+
+   Class::DBI
+   Class::DBI::Pager
+   HTML::Table
+   HTML::FillInForm
+   Class::AsForm
+
+COPYRIGHT AND LICENCE
+
+Artistic same as Perl
+
+Copyright (C) 2001 Aaron Johnson <solution@gina.net>
