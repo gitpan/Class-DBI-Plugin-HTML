@@ -1,26 +1,122 @@
 package Class::DBI::Plugin::HTML;
 
-use base qw( Class::DBI::Plugin);
+use base qw( Class::DBI::Plugin );
 
-our $VERSION = 0.8;
+our $VERSION = 0.9;
 use HTML::Table;
 use HTML::FillInForm;
 use CGI qw/:form/;
 use Class::DBI::AsForm;
 use Data::Dumper;
 use URI::Escape;
+use Config::Auto;
 use strict;
+
+our $config_hash = {};
+our $debug = 0;
+
+our @allowed_methods = qw(
+rows
+exclude_from_url
+display_columns
+cdbi_class
+page_name
+column_to_label
+descending_string
+ascending_string
+mouseover_bgcolor
+mouseover_class
+no_form_tag
+no_mouseover
+no_reset
+no_submit
+debug
+searchable
+rowclass
+rowclass_odd
+rowcolor_even
+rowcolor_odd
+filtered_class
+navigation_list
+navigation_column
+navigation_style
+navigation_alignment
+page_navigation_separator
+navigation_separator
+hide_zero_match
+query_string
+data_table
+form_table
+order_by
+hidden_fields
+auto_hidden_fields
+config_file
+);
+
+sub output_debug_info : Plugged {
+    my ($self,$message,$level) = @_;
+    $level ||= $debug;
+    return undef if $level == 0;
+    if ($level == 2) {
+        print "$message\n";
+    }
+    
+    if ($level == 1) {
+        warn "$message\n";
+    }
+}
+
+sub read_config : Plugged {
+    my ($self,$config_file) = @_;
+    my $config = Config::Auto::parse($config_file);
+
+    my $base = $config->{cdbi_class};
+    $base =~ s/\s//g;
+    
+    $config->{config_file} = $config_file;
+    foreach my $config_key (keys %{$config}) {
+        next if !grep /$config_key/ , @allowed_methods;
+        next if !defined $config->{$config_key};
+        # change ~ to space
+        $config->{$config_key} =~ s/~/ /g;
+        $config->{$config_key} =~ s/[\r\n]+$//;
+        $self->output_debug_info( "assigning: $config_key" );
+        if ($config->{$config_key} =~ /\|/) {
+            my @values = split(/\|/,$config->{$config_key});
+            $config->{$config_key} = \@values;
+        }
+        if ($config_key eq 'debug') {
+            $debug = $config->{$config_key};
+        } else {
+            $self->$config_key($config->{$config_key});
+        }
+    }   
+    $self->output_debug_info( Dumper($config) );
+}
 
 sub html : Plugged {
     my ( $class, %args ) = @_;
 
     my $self = bless {
     }, $class;
+ 
+    # add code for configuration file based settings
+    $self->output_debug_info( "conf = $args{-config_file}" );
+    
+    if (defined $args{-config_file}) {
+        $self->read_config( $args{-config_file} );
+    }
+     
+    # $config_hash = $config;
+    my $rows = $args{-rows} || $self->rows() || 15;
+    if ($rows) {
+        $self->pager_object($self->pager($rows,$args{-on_page}));
+    }
+    
+    # end code for configuration based settings
     
     $self;
 }
-
-our $debug = 0;
 
 =head1 NAME
 
@@ -40,16 +136,13 @@ Class::DBI::Plugin::HTML - Generate HTML Tables and Forms in conjunction with Cl
  # Inside your script you will be able to use this modules
  # methods on your table class or object as needed.
 
+ use ClassDBIBaseClass;
  use URI::Escape;
  use CGI;
  
  my $cgi = CGI->new();
  
- my $pager = Baseball::Master->pager(20, $cgi->param('page') || 1);
-
  my $cdbi_plugin_html = Baseball::Master->html();
- 
- my $html_table = $cdbi_plugin_html->html_table(-align=>'center');
  
  $cdbi_plugin_html->data_table->addRow('Last Name','First Name','Bats' , 'Throws' ,
                     'Height (ft)','(inches)',
@@ -62,49 +155,35 @@ Class::DBI::Plugin::HTML - Generate HTML Tables and Forms in conjunction with Cl
     } $cgi->param();
 
  $cdbi_plugin_html->params( \%params );    
-
- $cdbi_plugin_html->search_ref( 
-      -like_column_map  => { email => 'sam%' }
- );
+ $cdbi_plugin_html->exclude_from_url([ 'page' ]);
  
- $cdbi_plugin_html->url_query(
-      -exclude_from_url => [ 'page' ],
- );
+ # attribute style
+ # created based on params and exclude values from above
+ # auto sets the query_string value
+ $cdbi_plugin_html->url_query();
 
-    # set the page name (script) 
-    $cdbi_plugin_html->page_name('cdbitest.pl');
+ # set the page name (script) 
+ $cdbi_plugin_html->page_name('cdbitest.pl');
     
-    # indicate which columns to display
-    $cdbi_plugin_html->display_columns(     [ 'lastname','firstname',
+ # indicate which columns to display
+ $cdbi_plugin_html->display_columns(     [ 'lastname','firstname',
                   'bats'    ,'throws',
                   'ht_ft'   ,'ht_in',
                   'wt'      ,'birthyear' ]
  );
 
-    # indicate which columns to exclude, inverse of display above
-    $cdbi_plugin_html->exclude_columns();
+ # indicate which columns to exclude, inverse of display above
+ $cdbi_plugin_html->exclude_columns();
     
-    # indicate the base class to work with, this is optional,
-    # if you should create you object via a call to
-    # Class::DBI::Plugin::HTML vs. a Class::DBI sub class
-    # this assures the correct sub class is used for data collection
-    $cdbi_plugin_html->cdbi_class( 'Baseball::Master' );
+ # indicate the base class to work with, this is optional,
+ # if you should create you object via a call to
+ # Class::DBI::Plugin::HTML vs. a Class::DBI sub class
+ # this assures the correct sub class is used for data collection
+ $cdbi_plugin_html->cdbi_class( 'Baseball::Master' );
     
-    # set the page object if used (highly recommended on data
-    # sets over 1000 records)
-    $cdbi_plugin_html->pager_object( $pager );
+ # indicate the style of navigation to provide
+ $cdbi_plugin_html->navigation_style( 'both' );
     
-    # indicate the style of navigation to provide
-    $cdbi_plugin_html->navigation_style( 'both' );
-    
-    # indicate the mapping of database column name
-    # to display/friendly name
-    $cdbi_plugin_html->column_to_label( {
-                               lastname => 'Last Name',
-                               firstname => 'First Name',
-                            }
-                          );
- 
   print qq~<fieldset><legend>Filter by First Letter of Last Name</legend>~;
 
   print $cdbi_plugin_html->string_filter_navigation(
@@ -114,10 +193,10 @@ Class::DBI::Plugin::HTML - Generate HTML Tables and Forms in conjunction with Cl
 
   print qq~</fieldset>~;
 
-  print $cdbi_plugin_html->build_table(
-    firstname => 'only',
-    wt        => 'only',
- );
+  $cdbi_html->only('firstname');
+  
+
+  print $cdbi_plugin_html->build_table();
 
  my $nav = $cdbi_plugin_html->html_table_navigation();
 
@@ -127,48 +206,34 @@ Class::DBI::Plugin::HTML - Generate HTML Tables and Forms in conjunction with Cl
      
  print $cdbi_plugin_html->data_table;
 
- # now to create a form we do the following
- 
- my $user = Table::User->retrieve(1);
+=head1 UPGRADE WARNING
 
- #my $form = Table::User->build_form(
-
- # OR if you want to use the data record to fill in the form
- # make the form via a object versus the class.
-
- my $cdbi_form = $user->build_form(
-      
- );
- 
- # you can access the rows of the table via the HTML::Table
- # methods using the form_table method
- 
- # $cdbi_form->form_table->addRow(-1,'');
- 
- print $cdbi_form;
-
- # to use a prepopulated form you would do something like
- # this
- 
- my $params = { lastname => 'HANK', firstname => 'AARON' };
- my $ignore = [ 'lahmanid' ];
- my $form = $cdbi_form->form_table();
- 
- print $cdbi_form->fill_in_form(
-    scalarref     => \$form,
-    fdat          => $params,
-    ignore_fields => $ignore
- );
+As of the .8 release there have been changes to the methods and how they
+work.  It is likely that scripts built with older versions WILL break.  Please
+read below to find specific changes that may negatively impact scripts built
+using the the releases prior to .8.  The .9 release contains some minor modifications
+that could in some chases break your scripts, test carefully before upgrading in
+a production environment.
 
 =head1 DESCRIPTION
-
-Note: Major changes to the object and methods have occured in this
-release (.8).  It is highly likely that programs built to work with earlier
-versions of this module will no longer work.
 
 The intention of this module is to simplify the creation of HTML 
 tables and forms without having to write the HTML, either in your 
 script or in templates.
+
+It is intended for use inside of other frameworks such as Embperl,
+Apache::ASP or even CGI.  It does not aspire to be its own framework.
+If you are looking for a framework based on Class::DBI I suggest you
+look into the Maypole module.
+
+See FilterOnClick below for more on the purpose of this module.
+
+Tables are created using HTML::Table. The use of HTML::Table was selected
+because it allows for several advanced sorting techniques that can provide for
+easy manipulation of the data outside of the SQL statement.  This is very useful
+in scenarios where you want to provide/test a sort routine and not write
+SQL for it.  The more I use this utility the less likely it seems that one would
+need to leverage this, but it is an option if you want to explore it.
 
 This module is semi-stable, but production use is still not advised.
 If the maintainer is lazy and this warning appears in a 1.x or greater
@@ -177,31 +242,25 @@ release you can ignore it.
 Feedback on this module, its interface, usage, documentation etc. is
 welcome.
 
-The use of HTML::Table was selected because it allows for several
-advanced sorting techniques that can provide for easy manipulation
-of the data outside of the SQL statement.  This is very useful in
-scenarios where you want to provide/test a sort routine and not write
-SQL for it.
-
-It is intended for use inside of other frameworks such as Embperl,
-Apache::ASP or even CGI.  It does not aspire to be its own framework.
-If you are looking for a framework based on Class::DBI I suggest you
-look into the Maypole module.
-
-
 =head1 FilterOnClick
 
-The reason for this module is to provide a generic method
+This module provides a generic implementation
 of a technique I codifed in 2000 inside some one off CGI
 scripts.  That technique within its problem space produced a
 significantly easier to navigate database record view/action
-system for those that used it.  While the current status 
-(version .8 at the time of this writing) isn't a complete
-representation of the tool, I hope that it will provide enough
-so that others can contribute their ideas on how to improve the
-design and make it more generic.
+system for those that used it.
 
-The concept, at its core, is relatively simple in nature.
+As of release .9 98% of that functionality is replicated within this module,
+plus some new features.
+
+The concept, at its core, is relatively simple in nature.  You filter the results
+in the table by clicking on values that are of interest to you. Each click turns
+on or off a filter, which narrows or expands the total number of matching records.
+This allows for identifying abnormal entries, trends or errors simply by paging,
+searching or filtering through your data.  If you configure the table appropriately
+you can even link to applications or web pages to allow you edit the records.
+
+An example FilterOnClick session would consist of something like this:
 You get a table of records, for our example lets assume we
 have four columns: "First Name" aka FN, "Last Name" aka LN , "Address" ,
 and "Email".  These columns are pulled from the database and placed
@@ -211,21 +270,22 @@ table, but contain filter information within the query string.
 In other words the link holds information that will modify the SQL query
 for the next representation of data.  
 
-Presently there are two built in table level assign and 3 more that
-are specific to string based matches outside of the table itself.
-(see string_filter_navigation method below)
+Presently there are six (6) built in filter types for within tables and
+three (3) more that are specific to string based matches outside of the table
+itself. (see string_filter_navigation method below for info on the second three)
 
-The two table level filters are 'only' and 'like'. 'only' is an
-"=" in the SQL statement.  The 'like' is a 'LIKE' clause in the SQL
-query. The where clause that is 
+The six html table level filters are 'only','contains','beginswith','endswith'
+'variancepercent','variancenumerical'. The where clause that is 
 created within the module automatically is passed through to the
 Class::DBI::AbstractSearch module, which is in turn based on the
-SQL::Abstract module.
+SQL::Abstract module. In other words, you are not required to create any SQL
+statements or add any code to your Class::DBI base class.
 
 Back to the example at hand.  Lets say the database has 20K records
-the sort order was set to LN by default.  In the FN list you see the
-FN you are looking for so you click on it, when the script runs it
-generates a new query that now only shows (filters) records that match that FN.
+the sort order was set to LN by default. The FN column has been configured with
+an 'only' filter. In the FN list you see the FN you are looking for so you click
+on it, when the script runs it auto-generates a new filter (query) that now
+only shows records that match the FN you clicked on.
 If you click on the FN column a second time the filter based on
 FN is removed.
 
@@ -233,69 +293,216 @@ The filter of the table is cascading, you can perform it across
 multiple columns.  So if you want to find all the 'Smith's' with email
 addresses like 'aol.com' you could click first on an email address
 containing 'aol.com' and then a last name of 'Smith', provided you
-configured a proper 'LIKE' map.
+configured a proper filter code for the table.
 
 You can see FilterOnClick in action at:
 http://cdbi.gina.net/cdbitest.pl
 
-=head1 ACCESSORS
+Example code to create a FilterOnClick column value ( see the build_table method ):
 
-query_string (string) - sets or returns the query_string used when creating links
+Match Exactly
 
-page_name (string) - sets or returns the page_name the script is running under
+  $html->only('column_name');
+  column_name => 'only'
 
-where (hash ref) - sets or returns the where clause to pass into
-Class::DBI::AbstractSearch
+Match Beginning of column value with string provided
+  
+  $html->beginswith('column_name' , 'string'); # new way, can be done anywhere
+  
+  
+Match ending of column value with string provided
+  $html->endswith('column_name , 'string'); # new way, can be done anywhere
 
-display_columns (array ref) - sets or returns the columns and order
-of the columns to be displayed in the generated table or form.
+  
+Filter to columns that contain a particular string (no anchor point)
 
-exclude_columns (array ref) - sets or returns which columns to remove
-from display
+  $html->contains('column_name' , 'string'); # new way, can be done anywhere 
+ 
+Show records with a numerical variance of a column value
 
-data_table (object) - sets or returns a HTML::Table object (created via a call
-to the html_table method)
+  $html->variancenumerical('column_name' , number); # new way, can be done anywhere
 
-form_table (object) - sets or returns a HTML::Table object (created via a call
-to the html_table method)
+Show records with a percentage variance of a column value
 
-pager_object (object) - sets or returns the pager object which is a Class::DBI::Pager
-object
+  $html->variancepercent('column_name' , number); # new way, can be done anywhere
 
-navigation_style (string) - sets or returns the navigation style to create in the
-html_navigation method.
+=head1 CONFIGURATION FILE
 
-column_to_label (hash ref) - sets or
-
-cdbi_class (string) - sets or returns the table class the HTML is being generated for
-
-order_by (string) - sets or returns the column results are ordered by
+As of version .9 you can assign many of the attributes via a configuration file
+See the examples directory for a sample ini file
 
 =head1 METHOD NOTES
 
-Parameters used on more then one method have been provided accessors
-to remove the need to resend the parameters multiple times.  The accessors
-and their parameter level equals share the same names.  This was a major
-change in the .8 release.
-Parameters that are specific to particular method are only assignable by
-passing in the key value pair.
-
-The parameters are passed in via a hash for most of the methods,
-the Class::DBI::Plugin::HTML specific keys in the hash are preceeded
-by a hypen (-).  Column names can be passed in with there own
+The parameters are passed in via a hash for most of the methods.
+The Class::DBI::Plugin::HTML specific keys in the hash are preceeded
+by a hypen (-).  Column names can be passed in with their own
 anonymous subroutine (callback) if you needed to produce any
-special formating or linkage.  Column names do not require a hyphen.
-
-
+special formating or linkage.
 
 =head1 METHODS
 
-=cut
+=head2 html
+
+Creates a new Class::DBI::Plugin::HTML object
+
+    $cdbi_html = MyClassDBIModule->html();
+
+=head2 debug
+
+Wants: 1 or 0
+
+Defaults to: 0
+
+Valid in Conifguration File: Yes
+
+Set to one to turn on debugging output.  This will result in a considerable amount
+of information being sent to the browser output so be sure to disable in production.
+Can be set via method or configuration file.
+
+    $cdbi_html->debug(1);
+
+=head2 params
+
+Wants: Hash reference of page paramters
+
+Defaults to: {} (empty hash ref)
+
+Set the params that have been passed on the current request to the page/script
+
+    $cdbi_html->params( {
+        param1 => 'twenty'
+    } );
+    
+Using CGI
+
+    use URI::Escape;
+    my %params;
+
+    map { $params{$_} =
+           uri_unescape($cgi->param("$_"))
+        } $cgi->param();
+
+    $cdbi_html->params( \%params );
+    
+Using Apache::ASP
+
+    $cdbi_html->params( $Request->Form() );
+    
+Using Embperl
+
+    $cdbi_html->params( \%fdat );
+
+=head2 config
+
+Wants: configuration key, value is optional
+
+Defatuls to: na
+
+Configuration values can be accessed directly or via the config method. This is
+allowed so you know where the value you are calling is being assigned from.
+
+To get get a value:
+
+    $cdbi_html->config("searchable");
+
+To set a value do this:
+
+    $cdbi_html->config('searchable',1);
+
+=head2 display_columns
+
+Wants: Array ref of column names
+
+Defaults to: List of all columns available if left unassigned
+
+Valid in configuration file: Yes
+
+The list (array ref) of field names you want to create the
+columns from. If not sent the order the fields in the database will
+appear will be inconsistent. Works for tables or forms.
+
+    $cdbi_html->display_columns( [ 'lastname','firstname',
+                  'bats'    ,'throws',
+                  'ht_ft'   ,'ht_in',
+                  'wt'      ,'birthyear' ]
+    );
+
+=head2 exclude_from_url
+
+Wants: Array reference
+
+Defaults to: [] (emptry array ref)
+
+Key/value pair to be removed from auto generated URL query strings. The key for
+the page should be one of the items here to avoid navigation issues
+
+    $cdbi_html->exclude_from_url( [ 'page' ] );
+
+=head2 form_table
+
+Wants: HTML::Object
+
+Defaults to: HTML::Object
+
+Returns: HTML::Object
+
+    $cdbi_html->form_table(); # get current form table object
+    $cdbi_html->form_table($html_table_object); # set form table object
+
+There is no need to set this manually for simple forms.
+
+=head2 navigation_style
+
+Wants: string, either 'block' or 'both'
+
+Defaults to: block
+
+Valid in Configuration File: Yes
+
+Returns: Current setting
+
+    $cdbi_html->navigation_style('both');
+
+=head2 column_to_label
+
+Wants: Hash reference
+
+Defaults to: empty
+
+    $cdbi_html->column_to_label(
+        'firstname' => 'First Name',
+        'lastname' => 'Last Name'
+    );
+
+Presently not active, but will be in 1.0 release
+
+=head2 cdbi_class
+
+(string) - sets or returns the table class the HTML is being generated for
+
+=head2 config_file
+
+Returns the name of the config_file currently in use
+
+=head2 rows
+
+Wants: Number
+
+Defaults to: 15
+
+Sets the number of rows the table output by build_table will contain per page
+
+    $cdbi_html->rows(20);
 
 =head2 html_table
 
-returns an HTML::Table object, this is a public method and accepts a hash as its
-constructor options.  See HTML::Table for valid arguments.
+Wants: HTML::Table object
+
+Defaults to: HTML::Table object
+
+This is only useful if want to either create your own HTML::Table object and
+pass it in or you want to heavily modify the resulting table from build_table.
+See the L<HTML::Table> module for more information.
 
 =cut
 
@@ -308,47 +515,221 @@ sub html_table : Plugged {
 
 =head2 build_table
 
+Wants: Hash reference
+
+Defatuls to: na
+
+Returns: HTML::Table object
+
 Accepts a hash of options to define the table parameters and content.  This method
-returns an HTML::Table object.
+returns an HTML::Table object. It also sets the data_table method to the HTML::Table
+object generated so you can ignore the return value and make further modifications
+to the table via the built in methods.
    
 See Synopsis above for an example usage.
 
 The build_table method has a wide range of paramters that are mostly optional.
 
--display_columns (array ref, optional (has equivalent accessor) ) - The list of field names you want to create the
-columns from. If not sent the order the fields in the database will
-appear will be inconsistent.
+=head2 exclude_columns
 
--exclude_columns (array ref, optional (has equivalent accessor) ) - Don't show these fields even if included in the columns.
+Wants: Arrary reference
+
+Defaults to: na
+
+Valid in configuration File: Yes
+
+Returns: When called with no argument, returns current value; an array ref
+
+Removes fields even if included in the display_columns list.
 Useful if you are not setting the columns or the columns are dynamic and you
-want to insure a particular column (field) is not revealed.
+want to insure a particular column (field) is not revealed even if someone
+accidently adds it some where.
 
--data_table (HTML::Table Object, optional (has equivalent accessor) ) - Allows for you to pass in an HTML::Table object, this is handy
+=head2 data_table
+
+Wants: HTML::Table object
+
+Defaults to: na
+
+Returns: HTML::Table object is assigned
+
+Allows for you to pass in an HTML::Table object, this is handy
 if you have setup the column headers or have done some special formating prior to
 retrieving the results. 
 
--pager_object (Class::DBI::Pager Object, optional (has equivalent accessor) ) - Allows you to pass in a Class::DBI::Pager based object. This is useful in conjunction with the html_table_navigation method.  If not passed in
+=head2 pager_object
+
+Wants: Class::DBI::Pager object
+
+Defaults to: Class::DBI::Pager object
+
+Returns: Current pager_object
+
+Allows you to pass in a Class::DBI::Pager based object. This is useful in
+conjunction with the html_table_navigation method.  If not passed in
 and no -records have been based it will use the calling class to perform the
 lookup of records.
 
--records (array ref, optional) - Expects an anonymous array of record objects. This allows for
-your own creation of record retrieval methods without relying on the underlying techniques
-of the build_table attempts to automate it.
+As of version .9 you do not need to assign this manually, it will be auto
+populated when call to 'html' is made.
 
--where (Hash Ref, optional (has equivalent accessor) ) - Expects an anonymous hash that is compatiable with Class::DBI::AbstractSearch The url_and_where_statement method possibly can help
-you dynamically create these.
+=head2 records
 
--order_by (scalar, optional (has equivalent accessor) ) - This is passed along with the -where OR it is sent to the retrieve_all_sort_by method if present.  The retrieve_all_sort_by method is part of the Class::DBI::Plugin::RetrieveAll module.
+Wants: Array reference
 
--page_name (scalar (has equivalent accessor) ) - Used to create the links for the built in 'ONLY' and 'LIKE' utilities
+Defaults to: na
 
--query_string (scalar, optional (has equivalent accessor) ) - passed to the anonymous subroutines that might be available for a particular column.
+Returns: present value
 
--rowcolor (optional) - determines the alternate row backgroud color, default is '#c0c0c0'
+Expects an anonymous array of record objects. This allows for your own creation
+of record retrieval methods without relying on the underlying techniques of the
+build_table attempts to automate it. In other words you can send in records from
+none Class::DBI sources, but you lose some functionality.
 
--rowclass (optional) - overrides the -rowcolor above and assigns a class (css) to table rows
+=head2 where
 
-table_field_name (code ref || (like,only) , optional) - You can pass in anonymous subroutines for a particular field by using the table
+Wants: Hash reference
+
+Defaults to: Dynamically created hash ref based on query string values, part of
+the FilterOnClick process.
+
+Expects an anonymous hash that is compatiable with Class::DBI::AbstractSearch
+
+=head2 order_by
+
+Wants: scalar
+
+Returns: current value if set
+
+Passed along with the -where OR it is sent to the retrieve_all_sort_by method
+if present.  The retrieve_all_sort_by method is part of the
+L<Class::DBI::Plugin::RetrieveAll> module.
+
+=head2 page_name
+
+Wants: scalar
+
+Returns: current value if set
+
+Valid in Configuration file: Yes
+
+Used within form and querystring creation.  This is the name of the script that
+is being called.
+
+=head2 query_string
+
+Wants: scalar
+
+Returns: current value if set
+
+It is not required to set this, it auto generated through the FilterOnClick
+process, is useful for debugging.
+
+=head2 rowcolor_even
+
+Wants: Valid HTML code attribute
+
+Defaults to: '#ffffff'
+
+Returns: Current value if set
+
+Valid in Configuration file: Yes
+
+Define the even count row backgroud color
+
+=head2 rowcolor_odd
+
+Wants: Valid HTML code attributes
+
+Defaults to: '#c0c0c0'
+
+Valid in Configuration file: Yes
+
+Define the odd count row backgroud color
+
+=head2 rowclass
+
+
+Valid in Configuration file: Yes
+
+(optional) - overrides the -rowcolor above and assigns a class (css) to table rows
+
+=head2 no_mouseover
+
+Valid in Configuration file: Yes
+
+Turns off the mouseover feature on the table output by build_table
+
+=head2 mouseover_class
+
+
+Valid in Configuration file: Yes
+
+The CSS class to use when mousing over a table row
+
+=head2 searchable
+
+
+Valid in Configuration file: Yes
+
+Enables free form searching within a column
+
+=head2 mouseover_bgcolor
+
+
+Valid in Configuration file: Yes
+
+Color for mouseover if not using a CSS definition. Defaults to red if not set
+
+=head2 filtered_class
+
+Valid in Configuration file: Yes
+
+Defines the CSS class to use for columns that currently have an active Filter
+
+=head2 ascending_string
+
+Wants: string (can be image name)
+
+Default to: '^'
+
+Valid in Configuration file: Yes
+
+The string used to represent the ascending sort filter option. If value ends
+with a file extension assumes it is an image and adds approriate img tag.
+
+=head2 descending_string
+
+Wants: string (can be an image name)
+
+Defaults to: 'v'
+
+Valid in Configuration file: Yes
+
+The string used to represent the descending sort filter option. If value ends
+with a file extension assumes it is an image and adds approriate img tag.
+
+=head2 rowclass_odd
+
+Valid in Configuration file: Yes
+
+The CSS class to use for odd rows within the table
+
+=head2 navigation_separator
+
+Valid in Configuration file: Yes
+
+The seperator character(s) for string filter navigation
+
+=head2 page_navigation_separator
+
+Valid in Configuration file: Yes
+
+The seperator for page navigation
+
+=head2 table_field_name
+
+(code ref || (like,only) , optional) - You can pass in anonymous subroutines for a particular field by using the table
 field name (column).  Example:
     
     first_name => sub {
@@ -361,17 +742,6 @@ field name (column).  Example:
        }
        return qq!<a href="test2.pl?$turl">$name</a>!;
     },
-
-Optionally you can use the built-in FilterOnClick utilities of 'ONLY' and 'LIKE'.
-The example above is the basis of the process, but is provided as a built-in accessible by
-using:
-
-   first_name => 'only',
-
-The 'only' can could be  replaced with 'like' and is case insensitive.
-
-NOTE: If you use 'like' you will need to have a proper -like_column_map hashref
-assigned in your search_ref call.
 
 =cut
 
@@ -399,6 +769,18 @@ sub determine_columns : Plugged {
     return @columns;
 }
 
+sub create_auto_hidden_fields : Plugged {
+    my ($self) = @_;
+    my $hidden = $self->params() || {};
+    my $hidden_options;
+    foreach my $hidden_field ( keys %{ $hidden } ) {
+            next if $hidden_field !~ /\w/;
+            $hidden_options .=
+qq!<input name="$hidden_field" type="hidden" value="$hidden->{$hidden_field}">!;
+    }
+    $self->auto_hidden_fields($hidden_options);
+}
+
 sub build_table : Plugged {
     my ( $self, %args ) = @_;
     
@@ -406,14 +788,22 @@ sub build_table : Plugged {
     if (!$table->isa( 'HTML::Table' ) ) {
          $table = HTML::Table->new();
     }
-    my $table_obj    = $args{-pager_object}    || $self->pager_object();
-    my $page_name    = $args{-page_name}       || $self->page_name();
-    my $query_string = $args{-query_string}    || $self->query_string();
-    my $exclude      = $args{-exclude_columns} || $self->exclude_columns() || 0;
-    my $where        = $args{-where}           || $self->where();
-    my $order_by     = $args{-order_by}        || $self->order_by();
+    my $table_obj      = $args{-pager_object}    || $self->pager_object();
+    my $page_name      = $args{-page_name}       || $self->page_name();
+    my $query_string   = $args{-query_string}    || $self->query_string();
+    my $exclude        = $args{-exclude_columns} || $self->exclude_columns() || 0;
+    my $where          = $args{-where}           || $self->where();
+    my $order_by       = $args{-order_by}        || $self->order_by();
+    my $filtered_class = $args{-filtered_class}  || 'filtered';
+    my $search         = $args{-searchable}      || $self->searchable || 0;
     
     my $class;
+    
+    # order by via query string adjustment
+    if ($query_string && $query_string =~ /ORDERBYCOL/) {
+        my ($order_col,$direction) = $query_string =~ m/BYCOL\-([\w\_]+)=(\w+)/;
+        $order_by = "$order_col $direction"; 
+    }
     
     my @columns = $self->determine_columns($args{-display_columns});
     
@@ -425,6 +815,25 @@ sub build_table : Plugged {
     if ( $exclude eq 'ARRAY' ) {
         @columns = $self->_process_excludes( $exclude, @columns );
     }
+   
+    # create text search row if requested
+    if ($search) {
+        my @text_fields;
+        $self->create_auto_hidden_fields();
+        foreach my $col (@columns) {
+	    push @text_fields , qq!
+            <form method="GET" action="$page_name">
+	    <input type="text" name="SEARCH-$col" value="" size="4">
+	    <input type="submit" value="GO">! .
+            $self->auto_hidden_fields() .
+            qq!</form>
+	    !;
+	}
+
+	$table->addRow(@text_fields);
+	my $corner = $table->getCell( 1, 1 );
+    }
+    
     my @records;
 
     if ( ref $args{-records} eq 'ARRAY' ) {
@@ -432,7 +841,13 @@ sub build_table : Plugged {
     }
     else {
 	
-        if ( ref $where ne 'HASH' ) {
+        # testing based on suggestion from user
+        
+        if ( ref $where eq 'ARRAY' ) {
+           @records = $table_obj->search_where( @{ $where } ); 
+        }
+    
+        elsif ( ref $where ne 'HASH' ) {
             if ( defined $order_by ) {
                 @records = $table_obj->retrieve_all_sorted_by( $order_by );
             }
@@ -451,20 +866,52 @@ sub build_table : Plugged {
 
     }
     my $count;
+
+    # define our background colors (even and odd rows)
+    my $bgcolor   = $args{-rowcolor_odd}  || $self->rowcolor_odd()  || '#c0c0c0';
+    my $bgcolor2  = $args{-rowcolor_even} || $self->rowcolor_even() || '#ffffff';
+    
+    # define our colors or classes
+    my $mouseover_bgcolor = $args{-mouseover_bgcolor}  ||
+                            $self->mouseover_bgcolor() ||
+                            'red';
+    
+    my $mouseover_class   = $args{-mouseover_class}  ||
+                            $self->mouseover_class() ||
+                            '';
+    
+    # define if we use bgcolor or class to assign color
+    my $js_this_object = 'this.bgColor';
+    my $bg_over = $mouseover_bgcolor;
+    my $bg_out_odd  = $bgcolor;
+    my $bg_out_even = $bgcolor2;
+    
+    if ($mouseover_class) {
+        $js_this_object = 'this.className';
+        $bg_over = $mouseover_class;
+	$args{-rowclass} ||= $self->rowclass() || 'defaultRowClass';
+	$args{-rowclass_odd} ||= $self->rowclass_odd() || 'defaultRowClassOdd';
+        $bg_out_even = $args{-rowclass};
+	$bg_out_odd  = $args{-rowclass_odd};
+    }
+
+
     
     foreach my $rec (@records) {
         $count++;
         my @row;
         foreach (@columns) {
-
-            print "col = $_\n" if $debug;
+            if (!defined $args{$_} && defined $self->{column_filters}{$_}) {
+                $args{$_} = $self->{column_filters}{$_};
+            }
+            $self->output_debug_info( "col = $_" );
             if ( ref $args{$_} eq 'CODE' ) {
                 push @row, $args{$_}->( 
 		             $rec->$_,
 			     $query_string
 			     );
             }
-            elsif ( $args{$_} =~ /only|like|beginswith|endswith|contains/i ) {
+            elsif ( $args{$_} =~ /only|like|beginswith|endswith|contains|variance/i ) {
 
                 # || $args{$_} eq 'LIKE') {
                 # send script, column, value, url
@@ -474,23 +921,133 @@ sub build_table : Plugged {
 			       $_,
 			       $rec->$_,
 			       $query_string );
-            }
+            } elsif ( ref($args{$_}) eq 'ARRAY' ) {
+	       my ($type,$value) = @{ $args{$_} };
+	         my $display_value = $rec->$_;
+	         push @row,
+                  _value_link( "$type$value", 
+		               $page_name ,
+			       $_,
+			       $display_value,
+			       $query_string,
+			       1 );
+	       
+	    }
             else {
                 push @row, $rec->$_;
 
             }
+	    
+	    if ($query_string && $query_string =~ /(ONL|VAR|BEGIN|ENDS|CONTAINS)\w+\-$_/) {
+	       $row[-1] = qq~<div class="$filtered_class">$row[-1]</div>~;
+	    }
         }
         $table->addRow(@row);
+	
 	if ( ($count % 2 == 0) && $args{-rowclass} ne '' ) {
             $table->setRowClass( -1, $args{-rowclass} );
+	} elsif ( ($count % 2 != 0) && $args{-rowclass} ne '' ) {
+	    $table->setRowClass( -1, $args{-rowclass_odd} );
 	} elsif ( ($count %2 == 0) && $args{-rowclass} eq '') {
-	    $table->setRowBGColor( -1, $args{-rowcolor} || '#c0c0c0' );
+	    
+	    $table->setRowBGColor( -1, $bgcolor2 );
+	    #$table->setRowAttr( -1 , 
+	    #  qq!onmouseover="$js_this_object='$bg_over'"
+	    #   onmouseout="$js_this_object='$bgcolor'"!);
+	} elsif ( ($count %2 != 0) && $args{-rowclass} eq '') {
+	    
+	    $table->setRowBGColor( -1, $bgcolor );
 	}
+	
+        $args{-no_mouseover} ||= $self->no_mouseover();
+        
+	if (!$args{-no_mouseover}) {
+            
+	     my $out;
+	     if ($count % 2 == 0) {
+	         $out = $bg_out_even;
+	     } else {
+	         $out = $bg_out_odd;
+	     }
+	        $table->setRowAttr( -1 , 
+	          qq!onmouseover="$js_this_object='$bg_over'"
+	          onmouseout="$js_this_object='$out'"!);
+        }
 	
 	
 	# if defined $args{-rowclass};
     }
+    $self->data_table($table);
     return $table;
+}
+
+sub create_order_by_links : Plugged {
+     my ($self,%args) = @_;
+     my $query_string = $args{-query_string}      || $self->query_string();
+     my $asc_string   = $args{-ascending_string}  || 'v';
+     my $desc_string  = $args{-descending_string} || '^';
+     my $page_name    = $args{-page_name}         || $self->page_name();
+     my $q_string_copy = $query_string;
+     $query_string =~ s/ORDERBYCOL-(\w+)\=(ASC|DESC)//;
+     my $link_base    = "$page_name?$query_string&";
+     
+     my @order_by_html;
+     foreach my $col ( @{$self->display_columns} ) {
+         my $asc_qstring  = "ORDERBYCOL-$col=ASC";
+	 my $desc_qstring = "ORDERBYCOL-$col=DESC";
+	 my $asc_class_open   = '';
+	 my $desc_class_open  = '';
+	 my $asc_class_close  = '';
+	 my $desc_class_close = '';
+	 if ($q_string_copy =~ /\Q$asc_qstring/) {
+	     $asc_qstring = '';
+	     $asc_class_open = qq!<span class="orderedBy">!;
+	     $asc_class_close = qq!</span>!;
+	 }
+	 
+	 if ($q_string_copy =~ /\Q$desc_qstring/) {
+	     $desc_qstring = '';
+	     $desc_class_open = qq!<span class="orderedBy">!;
+	     $desc_class_close = qq!</span>!;
+	 }
+	 
+         if ($asc_string =~ /\.\w{3,}/i) {
+            $asc_string = qq!<img src="$asc_string">!;  
+         }
+         
+         if ($desc_string =~ /\.\w{3,}/i) {
+            $desc_string = qq!<img src="$desc_string">!;  
+         }
+         
+         
+         push @order_by_html, qq!
+         $asc_class_open<a href="$link_base$asc_qstring">$asc_string</a>$asc_class_close
+	 $desc_class_open<a href="$link_base$desc_qstring">$desc_string</a>$desc_class_close
+!; 
+     }
+     return @order_by_html;
+}
+
+# this is a work in progress
+# intended to provide hidden field support
+# for both forms and table
+
+sub add_hidden : Plugged {
+    
+    my ($self,$args) = @_;
+    my $hidden;
+    my $html_table;
+    if ( $hidden ) {
+        my $corner = $html_table->getCell( 1, 1 );
+        foreach my $hidden_field ( keys %{ $hidden } ) {
+            next if $hidden_field !~ /\w/;
+            $corner .=
+qq!<input name="$hidden_field" type="hidden" value="$hidden->{$hidden_field}">!;
+        }
+
+        $html_table->setCell( 1, 1, $corner );
+    }
+
 }
 
 =head2 build_form
@@ -546,11 +1103,19 @@ in this document.
                           );
  print $html->build_form();
 
-The submit button can be removed by sending -no_submit as an attribute to the build_form
-method.
+=head2 no_submit
 
-The form tag can be removed by sending -no_from_tag as an attribute to the build_form
-method.
+The submit button can be removed by sending -no_submit as an attribute to the build_form
+method or by setting the no_submit tag to 1. Default is 0;
+
+=head2 no_form_tag
+
+The opening HTML form tag can be removed by sending -no_from_tag as an attribute
+to the build_form method or by setting the no_form_tag method to 1. Default is 0;
+
+    $html->no_form_tag(1);
+
+=head2 hidden_fields
 
 Hidden fields can be added by putting a hash ref into the hidden_fields accessor or by
 sending in a hash ref with the -hidden_fields attribute of the build_form method.
@@ -595,6 +1160,8 @@ sub build_form : Plugged {
           if defined $args{-rowclass};
     }
 
+    $args{-no_submit} ||= $self->no_submit();
+
     if ( !$args{-no_submit} ) {
         $html_table =
           $self->_process_attributes( $args{-attributes}, $html_table );
@@ -616,6 +1183,8 @@ qq!<input name="$hidden_field" type="hidden" value="$hidden->{$hidden_field}">!;
         $html_table->setCell( 1, 1, $corner );
     }
 
+    $args{-no_form_tag} ||= $self->no_form_tag();
+
     if ( !$args{-no_form_tag} ) {
         $html_table =
           start_form( $args{-form_tag_attributes} ) . $html_table . end_form;
@@ -629,7 +1198,7 @@ sub _process_attributes : Plugged {
     my ( $self, $attributes, $html_table ) = @_;
     foreach ( keys %{$attributes} ) {
         if ( ref $attributes->{$_} eq 'ARRAY' ) {
-            print "doing a $_\n" if $debug;
+            $self->output_debug_info( "_process_attributes is doing a $_" );
             $html_table->$_( @{ $attributes->{$_} } );
         }
         else {
@@ -644,14 +1213,14 @@ sub _process_excludes : Plugged {
     my ( $self, $exclude_list, @columns ) = @_;
     my %exclude;
     map { $exclude{$_} = 1 } @{$exclude_list};
-    print "excluding\n" if $debug;
+    $self->output_debug_info( "excluding" . Dumper(\%exclude)  );
     map { undef $_ if exists $exclude{$_} } @columns;
     return grep /\w/, @columns;
 }
 
 sub _value_link {
 
-    my ( $type, $page_name, $column, $name, $turl ) = @_;
+    my ( $type, $page_name, $column, $name, $turl, $hardcoded ) = @_;
     my $ourl = $turl;
     $type = uc($type);
     my $otype = $type;
@@ -672,7 +1241,7 @@ sub _value_link {
     # add the string to the type is we are doing
     # a begin,end or contain link
     
-    if ( $type =~ /begin|end|contain/i ) {
+    if ( $type =~ /begin|end|contain/i && !$hardcoded ) {
          $type .= $name;
     }
     
@@ -686,20 +1255,20 @@ sub _value_link {
 
     if ( $turl =~ m/$otype\w+\-$column\=/) {
          $turl =~ s/$otype\w+\-$column\=1//;
-	 print "Just removed $otype<br>" if $debug;
+	 &output_debug_info( "Just removed $otype" );
     }
         
     if ($add_item == 1) {
             $turl .= "&$type-$column=$link_val";
     }
  
-       print qq~<br>type: $type 
+       &output_debug_info( qq~<br>type: $type 
     <br> page: $page_name 
     <br> column: $column 
     <br> name: $name 
     <br> turl: $turl
     <br> ourl: $ourl
-    <br>~ if $debug;
+    <br>~ );
        
     return qq!<a href="$page_name?$turl">$name</a>!;
 
@@ -732,6 +1301,9 @@ sub html_table_navigation : Plugged {
     my $page_name        = $args{-page_name}    || $self->page_name();
     my $query_string     = $args{-query_string} || $self->query_string();
     my $navigation_style = $args{-navigation_style}   || $self->navigation_style();
+    my $page_navigation_separator = $args{-page_navigation_separator} ||
+                                    $self->page_navigation_separator() ||
+                                    ' | ';
     
     my $first_page_link = CGI::a(
 	        {
@@ -766,7 +1338,7 @@ sub html_table_navigation : Plugged {
         }
 
         if ( $pager->previous_page && $pager->next_page ) {
-            $nav_block .= ' | ';
+            $nav_block .= $page_navigation_separator;
         }
 
         if ( $pager->next_page ) {
@@ -950,25 +1522,101 @@ The items in the 'strings' list will only be hrefs if they items in the database
 
 The allowed parameters to pass into the method are:
 
--hide_zero_match - Removes items that have no matches in the database from the strings allowed in the final navigation.
+=head2 hide_zero_match
+
+Removes items that have no matches in the database from the strings allowed in the final navigation.
 
 -position (optional - default is 'begin') - Tells the method how to do the match, allowed options are any case
 of 'begin' , 'end' or 'contains'.  These options can be the entire anchor points as outlined above,
 but for ease of use only the aforemention is enforced at a code level.
 
--query_string (optional) - This is the same as the parameter outlined in build_table above.
+=head2 query_string
 
--strings (optional, array_ref - default is A-Z) - Array ref containing the strings to filter on.
+(optional) - See methods above for documentation
 
--column - Indicates which column the string filter will occur on. If you want to provide a filter on multiple columns it is recommended that you create multiple string_filter_navigation.
+=head2 navigation_list
+
+(optional, array_ref - default is A-Z) - Array ref containing the strings to filter on.
+
+=head2 navigation_column
+
+Indicates which column the string filter will occur on.
+If you want to provide a filter on multiple columns it is recommended that
+you create multiple string_filter_navigation.
+Can be set via method, string_filter_navigation argument or configuration file
 
 -page_name - The name of page that the navigation should link to
 
--seperator (optional, default two non-breaking spaces) - The characters to place between each item in the list.
+=head2 navigation_alignment
 
--align (optional, defaults to center) - defines the alignment of the navigation
+Set HTML attribute alignment for the page navigation.
 
--no_reset - don't include the table reset link in the output
+=head2 navigation_seperator
+
+    $cdbi_html_table->navigation_seperator('::');
+-or-
+    -navigation_seperator => '::' # argument passed into string_filter_navigation
+-or-
+    navigation_sperator=:: in the configuration file
+    
+(optional, default two non-breaking spaces) - The characters to place between each item in the list.
+
+=head2 align
+
+(optional, defaults to center) - defines the alignment of the navigation
+
+=head2 no_reset
+
+don't include the filter reset link in the output
+
+=head2 form_select
+
+this methods expects the following:
+
+    -value_column    # column containing the value for the option in the select
+    -text_column     # column containing the text for the optoin in the select (optional)
+    -selected_value  # the value to be selected (optional)
+    -no_select_tag   # returns option list only (optional)
+
+=head1 FILTERS
+
+Filters are generated with the build_table method.  Filters allow for cascading
+drill down of data based on individual cell values.  See Example page for
+a demo.
+
+=head2 beginswith
+
+Declare a begins with match on a column
+
+    $cdbi_html_table->beginswith('column_name','A');
+    # where 'A' is the value to match at the beginning
+
+=head2 endswith
+
+   $cdbi_html_table->endswith('column_name','A');
+   # where 'A' is the value to match at the end of the column contents
+
+=head2 contains
+
+   $cdbi_html_table->contains('column_name','A');
+   # where 'A' is the value to match anywhere in the column contents
+
+=head2 variancepercent
+
+   $cdbi_html_table->variancepercent('column_name',2);
+   # where '2' is the allowed percentage of variance to filter on
+
+=head2 variancenumerical
+
+   $cdbi_html_table->variancenumerical('column_name',2);
+   # where '2' is the allowed variance to filter on based
+   # if value for 'column_name' is clicked
+
+=head2 only
+
+    $cdbi_html_table->only('column_name');
+    # creates a filter on 'column_name' cells to match the value in the cell
+    # clicked
 
 =cut
 
@@ -981,11 +1629,32 @@ sub string_filter_navigation : Plugged {
     # set up or variables and defaults
 
     my @links;
-    my @alphabet = @{ args{-strings} } || ( 'A' .. 'Z' );
-    $args{-separator} ||= '&nbsp;&nbsp;';
-    $args{-align}     ||= 'center';
-    my $page_name    = $args{-page_name}    || $self->page_name();
-    my $query_string = $args{-query_string} || $self->query_string();
+
+    my @alphabet;
+
+    $args{-strings} = $args{-navigation_list} || $self->navigation_list();
+
+    if (ref($args{-strings}) eq 'ARRAY') {
+        @alphabet = @{ $args{-strings} }
+    } else {
+        @alphabet = ( 'A' .. 'Z' )
+    }
+
+    my $navigation_separator = $args{-navigation_separator} ||
+                               $self->navigation_separator()  ||
+                               '&nbsp;&nbsp;';
+                               
+    my $navigation_alignment = $args{-navigation_alignment}
+                               || $self->navigation_alignment()
+                               || 'center';
+                               
+    my $page_name      = $args{-page_name}       || $self->page_name();
+    my $query_string   = $args{-query_string}    || $self->query_string();
+    my $filtered_class =    $args{-filtered_class}
+                            || $self->filtered_class()
+                            || 'filtered';
+    
+    $args{-no_reset} ||= $self->no_reset();
     
     if ( $args{-no_reset} == 0 ) {
         push @links, qq!<a href="$page_name">Reset</a>$args{-separator}!;
@@ -1029,16 +1698,20 @@ sub string_filter_navigation : Plugged {
             push @links, qq!$string!;
         }
 
-    }
+        if ($query_string =~ /(WITH|CONTAINS)$string\-$args{-column}/) {
+	       $links[-1] = qq~<span class="$filtered_class">$links[-1]</span>~;
+	}
 
-    return qq!<div align="$args{-align}">!
-      . join( $args{-separator}, @links )
+    }
+    
+    return qq!<div align="$navigation_alignment">!
+      . join( $navigation_separator, @links )
       . "</div>";
 }
 
 sub search_ref : Plugged {
     my ( $self, %args ) = @_;
-
+    $args{-exclude_from_url} ||= $self->exclude_from_url();
     $args{-params} ||= $self->params();
     my %where;
     if ( exists $args{-exclude_from_url} ) {
@@ -1050,16 +1723,18 @@ sub search_ref : Plugged {
     if ( exists $args{-params} ) {
 
         # print_hashref("Incoming parameters",$args{-params});
-        my @only       = grep /ONLY\-/,        keys %{ $args{-params} };
-        my @like       = grep /LIKE\-/,        keys %{ $args{-params} };
-        my @beginswith = grep /BEGINSWITH\w+/, keys %{ $args{-params} };
-        my @endswith   = grep /ENDSWITH\w+/,   keys %{ $args{-params} };
-        my @contains   = grep /CONTAINS\w+/,   keys %{ $args{-params} };
-
+        my @only       = grep /ONLY\-/,               keys %{ $args{-params} };
+        my @like       = grep /LIKE\-/,               keys %{ $args{-params} };
+        my @beginswith = grep /BEGINSWITH\w+/,        keys %{ $args{-params} };
+        my @endswith   = grep /ENDSWITH\w+/,          keys %{ $args{-params} };
+        my @contains   = grep /CONTAINS[\@\w+]/,      keys %{ $args{-params} };
+        my @percentage = grep /VARIANCEPERCENT\d+/,   keys %{ $args{-params} };
+        my @numerical  = grep /VARIANCENUMERICAL\d+/, keys %{ $args{-params} };
+	
         if (@only) {
-            warn "\tOnly show matches of:\n" if $debug;
+            $self->output_debug_info( "\tOnly show matches of: " );
             foreach my $only (@only) {
-	        print $only if $debug;
+	        $self->output_debug_info( $only );
                 $only =~ s/ONLY-//;
 
     # print qq~\t\t$only becomes $only = '$args{-params}->{"ONLY-" . $only}'\n~;
@@ -1084,38 +1759,95 @@ sub search_ref : Plugged {
         }
 
         if (@beginswith) {
-            warn "\tShow only begining with\n" if $debug;
+            $self->output_debug_info( "\tShow only begining with" );
             foreach my $beginswith (@beginswith) {
                 my ( $value, $column ) =
                   $beginswith =~ m/beginswith(\w+)-([\w\_]+)/i;
-                warn
-qq~\t\t'$beginswith' - looking $column that begins with $value\n~;
+                $self->output_debug_info(
+            qq~    '$beginswith' - looking $column that begins with $value~);
                 $where{$column} = { 'LIKE', "$value\%" };
             }
         }
 
         if (@endswith) {
-            warn "\tShow only endswith with\n" if $debug;
+            $self->output_debug_info("\tShow only endswith with");
+            
             foreach my $endswith (@endswith) {
                 my ( $value, $column ) =
                   $endswith =~ m/endswith(\w+)-([\w\_]+)/i;
-                warn
-                  qq~\t\t'$endswith' - looking $column that ends with $value\n~;
+                $self->output_debug_info(
+                  qq~\t\t'$endswith' - looking $column that ends with $value~);
                 $where{$column} = { 'LIKE', "\%$value" };
             }
         }
 
         if (@contains) {
-            warn "\tShow only entries that contain\n" if $debug;
+            $self->output_debug_info("\tShow only entries that contain");
+            my $null = 'IS NULL';
+            my $notnull = 'IS NOT NULL';
             foreach my $contains (@contains) {
                 my ( $value, $column ) =
-                  $contains =~ m/contains(\w+)-([\w\_]+)/i;
-                warn
-                  qq~\t\t'$contains' - looking $column that contain $value\n~;
-                $where{$column} = { 'LIKE', "\%$value\%" };
+                  $contains =~ m/contains(.+)-([\w\_]+)/i;
+                $self->output_debug_info(
+                    qq~\t\t'$contains' - looking $column that contain $value~);
+                if ($value eq 'NOTNULL') {
+                     $where{$column} = \$notnull;
+                } elsif ($value eq 'NULL') {
+                     $where{$column} = \$null;
+                } elsif ($value eq 'NOSTRING') {
+                     $where{$column} = '';
+                } else {
+                     $where{$column} = { 'LIKE', "\%$value\%" };
+                }
             }
         }
 
+	if (@percentage) {
+	    $self->output_debug_info(
+                "\tShow only entries that are within a percentage variance");
+	    foreach my $per (@percentage) {
+	        my ( $percent , $column ) =
+		   # VARIANCEPERCENT5-wt=170
+		   $per =~ m/VARIANCEPERCENT(\d+)-([\w\_]+)/i;
+		   # $per =~ m/VARIANCEPERCENT(\d+)-([\w\_]+)/i;
+		my $value = $args{-params}->{$per};
+	        $self->output_debug_info(
+                 qq~    $per - looking for $percent variance
+    on $column where value for variance is $value~);
+		$percent = $percent / 100;
+		my $diff    = $value * $percent;
+		
+		my $high = $value + $diff;
+		my $low  = $value - $diff;
+		
+		$where{$column} = { 'BETWEEN' , [ $low , $high ] };
+	    }
+	}
+	
+	if (@numerical) {
+	    $self->output_debug_info("\tShow only entries that are within a percentage variance");
+	    foreach my $string (@numerical) {
+	        my ( $number , $column ) =
+		   # VARIANCEPERCENT5-wt=170
+		   $string =~ m/VARIANCENUMERICAL(\d+)-([\w\_]+)/i;
+		   # $per =~ m/VARIANCEPERCENT(\d+)-([\w\_]+)/i;
+		my $value = $args{-params}->{$string};
+	        $self->output_debug_info(
+    qq~    $string - looking for $number variance
+    on $column where value for variance is $value~);
+		
+		
+		my $high = $value + $number;
+		my $low  = $value - $number;
+		
+		$where{$column} = { 'BETWEEN' , [ $low , $high ] };
+	    }
+	}
+	
+    }
+
+    if (exists $args{-override}) {
+        %where = ( %where , %{  $args{-override} } );
     }
 
     if ( scalar( keys %where ) > 0 ) {
@@ -1139,9 +1871,10 @@ sub url_query : Plugged {
     my @url;
     foreach my $key ( keys %Param ) {
 
-        if ( $key =~ m/\w/ && $Param{"$key"} ) {
+        if ( $key =~ m/\w/ && defined $Param{"$key"} ) {
+            $self->output_debug_info("url_query $key<br>");
             push @url, qq~$key=~ . uri_escape( $Param{"$key"} )
-              if $Param{"$key"} ne '';
+              if defined $Param{"$key"}; # ne '';
         }
     }
 
@@ -1208,7 +1941,7 @@ sub get_records : Plugged {
 	             $table_obj->pager_object()
 		     
     }
-    warn Dumper($table_obj) if $debug;
+    &output_debug_info( Dumper($table_obj) );
     my @records;
     if ( ref $args{-where} ne 'HASH' ) {
         if ( defined $order_by ) {
@@ -1229,14 +1962,28 @@ sub get_records : Plugged {
     return @records;
 }
 
-=head2 form_select
+=head1 INTERNAL METHODS/SUBS
 
-this methods expects the following:
+If you want to change behaviors or hack the source these methods are subs should
+be reviewed as well.
 
-    -value_column    # column containing the value for the option in the select
-    -text_column     # column containing the text for the optoin in the select (optional)
-    -selected_value  # the value to be selected (optional)
-    -no_select_tag   # returns option list only (optional)
+=head2 get_records
+
+Finds all matching records in the database
+
+=head2 create_order_by_links
+
+=head2 add_number
+
+=head2 determine_columns
+
+Finds the columns that are to be displayed
+
+=head2 auto_hidden_fields
+
+=head2 add_hidden
+
+=head2 create_auto_hidden_fields
 
 =head1 BUGS
 
@@ -1244,7 +1991,7 @@ Unknown at this time.
 
 =head1 SEE ALSO
 
-Class::DBI, Class::DBI::AbstractSearch, Class::DBI::AsForm, HTML::Table, Class::DBI::Pager
+L<Class::DBI>, L<Class::DBI::AbstractSearch>, L<Class::DBI::AsForm>, L<HTML::Table>, L<Class::DBI::Pager>
 
 =head1 AUTHOR
 
@@ -1275,7 +2022,31 @@ the same terms as Perl itself.
 
 =cut
 
-# experimental accessors below
+
+sub params : Plugged {
+      my $self = shift;
+
+      if(@_ == 1) {
+          my $params = shift;
+          foreach my $key ( keys %{ $params } ) {
+              next if $key !~ /SEARCH/;
+              if (!defined $params->{$key}) {
+                  delete $params->{$key};
+                  next;
+              }
+              my ($column) = $key =~ /SEARCH-(.+)/;
+              $params->{"CONTAINS$params->{$key}-$column"} = 1;
+              delete $params->{$key};
+          }
+          $self->{params} = $params;
+      }
+      elsif(@_ > 1) {
+          $self->{params} = [@_];
+      }
+
+      return $self->{params};
+  }
+
 
 sub query_string : Plugged {
       my $self = shift;
@@ -1288,84 +2059,6 @@ sub query_string : Plugged {
       }
 
       return $self->{query_string};
-  }
-
-sub page_name : Plugged {
-      my $self = shift;
-
-      if(@_ == 1) {
-          $self->{page_name} = shift;
-      }
-      elsif(@_ > 1) {
-          $self->{page_name} = [@_];
-      }
-
-      return $self->{page_name};
-  }
-
-sub where : Plugged {
-      my $self = shift;
-
-      if(@_ == 1) {
-          $self->{where} = shift;
-      }
-      elsif(@_ > 1) {
-          $self->{where} = [@_];
-      }
-
-      return $self->{where};
-  }
-
-sub display_columns : Plugged {
-      my $self = shift;
-
-      if(@_ == 1) {
-          $self->{display_columns} = shift;
-      }
-      elsif(@_ > 1) {
-          $self->{display_columns} = [@_];
-      }
-
-      return $self->{display_columns};
-  }
-
-sub exclude_columns : Plugged {
-      my $self = shift;
-
-      if(@_ == 1) {
-          $self->{exclude_columns} = shift;
-      }
-      elsif(@_ > 1) {
-          $self->{exclude_columns} = [@_];
-      }
-
-      return $self->{exclude_columns};
-  }
-
-sub data_table : Plugged {
-      my $self = shift;
-
-      if(@_ == 1) {
-          $self->{data_table} = shift;
-      }
-      elsif(@_ > 1) {
-          $self->{data_table} = [@_];
-      }
-
-      return $self->{data_table};
-  }
-
-sub form_table : Plugged {
-      my $self = shift;
-
-      if(@_ == 1) {
-          $self->{form_table} = shift;
-      }
-      elsif(@_ > 1) {
-          $self->{form_table} = [@_];
-      }
-
-      return $self->{form_table};
   }
 
 sub pager_object : Plugged {
@@ -1381,82 +2074,497 @@ sub pager_object : Plugged {
       return $self->{pager_object};
   }
 
-sub navigation_style : Plugged {
+sub where : Plugged {
       my $self = shift;
 
       if(@_ == 1) {
-          $self->{navigation_style} = shift;
+          $self->{where} = shift;
       }
       elsif(@_ > 1) {
-          $self->{navigation_style} = [@_];
+          $self->{where} = [@_];
       }
 
-      return $self->{navigation_style};
+      return $self->{where};
   }
 
-sub column_to_label : Plugged {
-      my $self = shift;
+## Testing this section for .9 release
 
-      if(@_ == 1) {
-          $self->{column_to_label} = shift;
-      }
-      elsif(@_ > 1) {
-          $self->{column_to_label} = [@_];
-      }
+sub config : Plugged {
+    my ($self,$key) = @_;
+    # my $config = Class::DBI::Plugin::HTML::Config->new();
+    return $config_hash->{$key};
+}
 
-      return $self->{column_to_label};
-  }
+## the following are called with:
+## $html->beginswith('lastname','A');
+
+sub beginswith : Plugged {
+    my $self = shift;
+    $self->{column_filters}{$_[0]} = [ 'BEGINSWITH' , $_[1] ];
+}
+
+sub endswith : Plugged {
+    my $self = shift;
+    $self->{column_filters}{$_[0]} = [ 'ENDSWITH' , $_[1] ];
+}
+
+sub contains : Plugged {
+    my $self = shift;
+    $self->{column_filters}{$_[0]} = [ 'CONTAINS' , $_[1] ];    
+}
+
+sub variancepercent : Plugged {
+    my $self = shift;
+    $self->{column_filters}{$_[0]} = [ 'VARIANCEPERCENT' , $_[1] ];    
+}
+
+sub variancenumerical : Plugged {
+    my $self = shift;
+    $self->{column_filters}{$_[0]} = [ 'VARIANCENUMERICAL' , $_[1] ];    
+}
+
+sub only : Plugged {
+    my $self = shift;
+    $self->{column_filters}{$_[0]} = 'ONLY';
+}
+
+## from config
+
+sub rows : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{rows} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{rows} = [@_];
+    }
+    return $self->{rows};
+}
+
+sub exclude_from_url : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{exclude_from_url} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{exclude_from_url} = [@_];
+    }
+    return $self->{exclude_from_url};
+}
+
+sub display_columns : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{display_columns} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{display_columns} = [@_];
+    }
+    return $self->{display_columns};
+}
 
 sub cdbi_class : Plugged {
-      my $self = shift;
+    my $self = shift;
 
-      if(@_ == 1) {
-          $self->{cdbi_class} = shift;
-      }
-      elsif(@_ > 1) {
-          $self->{cdbi_class} = [@_];
-      }
+    if(@_ == 1) {
+        $self->{cdbi_class} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{cdbi_class} = [@_];
+    }
+    return $self->{cdbi_class};
+}
 
-      return $self->{cdbi_class};
-  }
+sub page_name : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{page_name} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{page_name} = [@_];
+    }
+    return $self->{page_name};
+}
+
+sub column_to_label : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{column_to_label} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{column_to_label} = [@_];
+    }
+    return $self->{column_to_label};
+}
+
+sub descending_string : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{descending_string} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{descending_string} = [@_];
+    }
+    return $self->{descending_string};
+}
+
+sub ascending_string : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{ascending_string} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{ascending_string} = [@_];
+    }
+    return $self->{ascending_string};
+}
+
+sub mouseover_bgcolor : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{mouseover_bgcolor} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{mouseover_bgcolor} = [@_];
+    }
+    return $self->{mouseover_bgcolor};
+}
+
+sub mouseover_class : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{mouseover_class} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{mouseover_class} = [@_];
+    }
+    return $self->{mouseover_class};
+}
+
+sub no_form_tag : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{no_form_tag} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{no_form_tag} = [@_];
+    }
+    return $self->{no_form_tag};
+}
+
+sub no_mouseover : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{no_mouseover} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{no_mouseover} = [@_];
+    }
+    return $self->{no_mouseover};
+}
+
+sub no_reset : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{no_reset} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{no_reset} = [@_];
+    }
+    return $self->{no_reset};
+}
+
+sub no_submit : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{no_submit} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{no_submit} = [@_];
+    }
+    return $self->{no_submit};
+}
+
+sub debug : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{debug} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{debug} = [@_];
+    }
+    return $self->{debug};
+}
+
+sub searchable : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{searchable} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{searchable} = [@_];
+    }
+    return $self->{searchable};
+}
+
+sub rowclass : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{rowclass} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{rowclass} = [@_];
+    }
+    return $self->{rowclass};
+}
+
+sub rowclass_odd : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{rowclass_odd} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{rowclass_odd} = [@_];
+    }
+    return $self->{rowclass_odd};
+}
+
+sub rowcolor_even : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{rowcolor_even} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{rowcolor} = [@_];
+    }
+    return $self->{rowcolor_even};
+}
+
+sub rowcolor_odd : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{rowcolor_odd} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{rowcolor_odd} = [@_];
+    }
+    return $self->{rowcolor_odd};
+}
+
+sub filtered_class : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{filtered_class} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{filtered_class} = [@_];
+    }
+    return $self->{filtered_class};
+}
+
+sub navigation_list : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{navigation_list} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{navigation_list} = [@_];
+    }
+    return $self->{navigation_list};
+}
+
+sub navigation_column : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{navigation_column} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{navigation_column} = [@_];
+    }
+    return $self->{navigation_column};
+}
+
+sub navigation_style : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{navigation_style} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{navigation_style} = [@_];
+    }
+    return $self->{navigation_style};
+}
+
+sub navigation_alignment : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{navigation_alignment} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{navigation_alignment} = [@_];
+    }
+    return $self->{navigation_alignment};
+}
+
+#sub separator : Plugged {
+#    my $self = shift;
+#
+#    if(@_ == 1) {
+#        $self->{separator} = shift;
+#    }
+#    elsif(@_ > 1) {
+#        $self->{separator} = [@_];
+#    }
+#    return $self->{separator};
+#}
+
+sub hide_zero_match : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{hide_zero_match} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{hide_zero_match} = [@_];
+    }
+    return $self->{hide_zero_match};
+}
+
+sub data_table : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{data_table} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{data_table} = [@_];
+    }
+    return $self->{data_table};
+}
+
+sub form_table : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{form_table} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{form_table} = [@_];
+    }
+    return $self->{form_table};
+}
 
 sub order_by : Plugged {
-      my $self = shift;
+    my $self = shift;
 
-      if(@_ == 1) {
-          $self->{order_by} = shift;
-      }
-      elsif(@_ > 1) {
-          $self->{order_by} = [@_];
-      }
-
-      return $self->{order_by};
-  }
-
-sub params : Plugged {
-      my $self = shift;
-
-      if(@_ == 1) {
-          $self->{params} = shift;
-      }
-      elsif(@_ > 1) {
-          $self->{params} = [@_];
-      }
-
-      return $self->{params};
-  }
+    if(@_ == 1) {
+        $self->{order_by} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{order_by} = [@_];
+    }
+    return $self->{order_by};
+}
 
 sub hidden_fields : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{hidden_fields} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{hidden_fields} = [@_];
+    }
+    return $self->{hidden_fields};
+}
+
+sub auto_hidden_fields : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{auto_hidden_fields} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{auto_hidden_fields} = [@_];
+    }
+    return $self->{auto_hidden_fields};
+}
+
+sub config_file : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{config_file} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{config_file} = [@_];
+    }
+    return $self->{config_file};
+}
+
+sub exclude_columns : Plugged {
       my $self = shift;
 
       if(@_ == 1) {
-          $self->{hidden_fields} = shift;
+          $self->{exclude_columns} = shift;
       }
       elsif(@_ > 1) {
-          $self->{hidden_fields} = [@_];
+          $self->{exclude_columns} = [@_];
       }
 
-      return $self->{hidden_fields};
+      return $self->{exclude_columns};
   }
-  
+
+
+sub page_navigation_separator : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{page_navigation_separator} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{page_navigation_separator} = [@_];
+    }
+    return $self->{page_navigation_separator};
+}
+
+sub navigation_separator : Plugged {
+    my $self = shift;
+
+    if(@_ == 1) {
+        $self->{navigation_separator} = shift;
+    }
+    elsif(@_ > 1) {
+        $self->{navigation_separator} = [@_];
+    }
+    return $self->{navigation_separator};
+}
+
+
+## end from config
+
 1;

@@ -1,5 +1,51 @@
 Revision history for Perl extension Class::DBI::Plugin::HTML.
 
+.9 + Added color on mouseover for result rows
+   
+   + Added methods to define the following builtin FilterOnClick methods:
+        BEGINSWITH
+        ENDSWITH
+        CONTAINS
+        VARIANCEPERCENT
+        VARIANCENUMERICAL
+
+   + Added variances to the built in FilterOnClick items.
+     One for numerical variance and one for percentage
+     variance.
+     
+   o Modified the table for full (optional) support of style sheet
+     or bgcolor defined colors for rows.
+    
+   + Added orderby creation method, this method is likely
+     to change in future versions so use with caution
+    
+   + Added ability to make columns searchable
+   
+   + Added filter class option
+   
+   o Modified order by detection
+   
+   o Modified to allow users to pass in an existing where array ref
+   
+   o Modified warnings to be output only when debug is enabled
+   
+   + Added code to allow for searching for NULL and NOT NULL rows
+   
+   + Added ability to set most options via a configuration file
+   
+   o Extensive documentation changes
+   
+   + Increased automation of process
+   
+   o Realigned names of method and arguments for better consistency
+   
+   o Enchanced testing suite
+   
+   + Moved error handling to a method and allow for warn or print level
+     debugging based on the debug level.  Currently 1 or 2, with 1 = STDERR
+     and 2 = STDOUT
+   
+
 .8 - Correctly check for passed in column names in build_table
      as an array ref
      
